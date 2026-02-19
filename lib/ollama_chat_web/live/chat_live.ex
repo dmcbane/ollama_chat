@@ -492,11 +492,14 @@ defmodule OllamaChatWeb.ChatLive do
 
   defp is_connection_error?(reason) do
     cond do
+      is_struct(reason, Req.TransportError) ->
+        reason.reason == :econnrefused or reason.reason == :timeout
+
       is_binary(reason) ->
         String.contains?(reason, ["connection refused", "econnrefused", "timeout"])
 
       is_map(reason) ->
-        Map.has_key?(reason, :reason) and reason.reason == :econnrefused
+        Map.get(reason, :reason) in [:econnrefused, :timeout]
 
       true ->
         false
