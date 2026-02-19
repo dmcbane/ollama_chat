@@ -58,15 +58,21 @@ defmodule OllamaChat.OllamaClient do
     case Req.post(chat_url(),
            json: body,
            into: fn {:data, data}, {req, resp} ->
-             case Jason.decode(data) do
-               {:ok, chunk} ->
-                 callback.(chunk)
-                 {:cont, {req, resp}}
+             # Split by newlines as Ollama sends one JSON object per line
+             data
+             |> String.split("\n", trim: true)
+             |> Enum.each(fn line ->
+               case Jason.decode(line) do
+                 {:ok, chunk} ->
+                   callback.(chunk)
 
-               {:error, _} ->
-                 # Skip invalid JSON chunks
-                 {:cont, {req, resp}}
-             end
+                 {:error, _} ->
+                   # Skip invalid JSON chunks
+                   :ok
+               end
+             end)
+
+             {:cont, {req, resp}}
            end
          ) do
       {:ok, _} ->

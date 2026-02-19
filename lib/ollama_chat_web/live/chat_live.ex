@@ -12,7 +12,10 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:error, nil)
       |> assign(:ollama_status, :unknown)
       |> assign(:available_models, [])
-      |> assign(:selected_model, "llama3")
+      |> assign(
+        :selected_model,
+        Application.get_env(:ollama_chat, :ollama_default_model, "llama3")
+      )
       |> assign(:streaming_message, "")
       |> assign(:messages_empty?, true)
       |> assign(:form, to_form(%{"message" => ""}))
@@ -82,15 +85,20 @@ defmodule OllamaChatWeb.ChatLive do
       model = socket.assigns.selected_model
 
       spawn(fn ->
+        IO.puts("Starting Ollama stream for model: #{model}")
+
         result =
           OllamaClient.chat_stream(
             messages_for_api,
             fn chunk ->
+              IO.inspect(chunk, label: "Received chunk")
+
               if chunk["message"] && chunk["message"]["content"] do
                 send(parent, {:stream_chunk, assistant_message_id, chunk["message"]["content"]})
               end
 
               if chunk["done"] do
+                IO.puts("Stream complete")
                 send(parent, {:stream_done, assistant_message_id})
               end
             end,
@@ -98,8 +106,13 @@ defmodule OllamaChatWeb.ChatLive do
           )
 
         case result do
-          :ok -> :ok
-          {:error, reason} -> send(parent, {:stream_error, reason})
+          :ok ->
+            IO.puts("Stream finished successfully")
+            :ok
+
+          {:error, reason} ->
+            IO.inspect(reason, label: "Stream error")
+            send(parent, {:stream_error, reason})
         end
       end)
 
@@ -133,8 +146,14 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_info(:load_models, socket) do
     case OllamaClient.list_models() do
-      {:ok, models} ->
-        {:noreply, assign(socket, :available_models, models)}
+      {:ok, models} when models != [] ->
+        {:noreply,
+         socket
+         |> assign(:available_models, models)
+         |> assign(:selected_model, List.first(models))}
+
+      {:ok, []} ->
+        {:noreply, assign(socket, :available_models, [])}
 
       {:error, _reason} ->
         {:noreply, assign(socket, :available_models, [])}
