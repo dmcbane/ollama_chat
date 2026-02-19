@@ -169,8 +169,7 @@ defmodule OllamaChat.OllamaClient do
   end
 
   defp ollama_start_command do
-    Application.get_env(:ollama_chat, :ollama_start_command) ||
-      System.get_env("OLLAMA_START_COMMAND")
+    Application.get_env(:ollama_chat, :ollama_start_command)
   end
 
   defp connection_refused?(error) do
