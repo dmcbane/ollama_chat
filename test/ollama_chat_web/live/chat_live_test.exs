@@ -165,7 +165,7 @@ defmodule OllamaChatWeb.ChatLiveTest do
       {:ok, view, _html} = live(conn, "/")
 
       # Simulate an error by sending a message to the LiveView
-      send(view.pid, {:stream_error, "Test error message"})
+      send(view.pid, {:stream_error, "test-msg-id", "Test error message"})
 
       # Give it time to process
       Process.sleep(50)

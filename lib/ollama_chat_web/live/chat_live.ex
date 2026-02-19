@@ -10,6 +10,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:page_title, "Ollama Chat")
       |> assign(:loading, false)
       |> assign(:error, nil)
+      |> assign(:status_message, nil)
       |> assign(:ollama_status, :unknown)
       |> assign(:available_models, [])
       |> assign(
@@ -76,6 +77,7 @@ defmodule OllamaChatWeb.ChatLive do
         |> assign(:form, to_form(%{"message" => ""}))
         |> assign(:loading, true)
         |> assign(:error, nil)
+        |> assign(:status_message, nil)
         |> assign(:streaming_message, "")
         |> assign(:messages_empty?, false)
         |> assign(:message_history, [user_message | socket.assigns.message_history])
@@ -85,20 +87,15 @@ defmodule OllamaChatWeb.ChatLive do
       model = socket.assigns.selected_model
 
       spawn(fn ->
-        IO.puts("Starting Ollama stream for model: #{model}")
-
         result =
           OllamaClient.chat_stream(
             messages_for_api,
             fn chunk ->
-              IO.inspect(chunk, label: "Received chunk")
-
               if chunk["message"] && chunk["message"]["content"] do
                 send(parent, {:stream_chunk, assistant_message_id, chunk["message"]["content"]})
               end
 
               if chunk["done"] do
-                IO.puts("Stream complete")
                 send(parent, {:stream_done, assistant_message_id})
               end
             end,
@@ -107,12 +104,10 @@ defmodule OllamaChatWeb.ChatLive do
 
         case result do
           :ok ->
-            IO.puts("Stream finished successfully")
             :ok
 
           {:error, reason} ->
-            IO.inspect(reason, label: "Stream error")
-            send(parent, {:stream_error, reason})
+            send(parent, {:stream_error, assistant_message_id, reason})
         end
       end)
 
@@ -133,6 +128,7 @@ defmodule OllamaChatWeb.ChatLive do
      |> assign(:messages_empty?, true)
      |> assign(:streaming_message, "")
      |> assign(:error, nil)
+     |> assign(:status_message, nil)
      |> assign(:message_history, [])}
   end
 
@@ -204,12 +200,86 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
-  def handle_info({:stream_error, reason}, socket) do
+  def handle_info({:stream_error, message_id, reason}, socket) do
+    # Remove the failed assistant message
+    socket =
+      socket
+      |> stream_delete(:messages, %{id: message_id})
+      |> assign(:loading, false)
+      |> assign(:streaming_message, "")
+
+    # Check if it's a connection error and attempt recovery
+    if is_connection_error?(reason) do
+      send(self(), {:attempt_recovery, message_id})
+
+      {:noreply,
+       socket
+       |> assign(:status_message, "Connection to Ollama lost. Attempting to reconnect...")
+       |> assign(:error, nil)}
+    else
+      {:noreply,
+       socket
+       |> assign(:error, format_error(reason))
+       |> assign(:status_message, nil)}
+    end
+  end
+
+  @impl true
+  def handle_info({:attempt_recovery, message_id}, socket) do
+    parent = self()
+
+    spawn(fn ->
+      case OllamaClient.ensure_ollama_running() do
+        :ok ->
+          # Ollama is running or was successfully started
+          Process.sleep(2000)
+
+          if OllamaClient.ollama_running?() do
+            send(parent, {:recovery_success, message_id})
+          else
+            send(parent, :recovery_failed)
+          end
+
+        {:error, reason} ->
+          send(parent, {:recovery_failed, reason})
+      end
+    end)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:recovery_success, _message_id}, socket) do
+    # Clear status message after a delay
+    Process.send_after(self(), :clear_status, 3000)
+
+    {:noreply,
+     socket
+     |> assign(:ollama_status, :running)
+     |> assign(:error, nil)}
+  end
+
+  @impl true
+  def handle_info({:recovery_failed, reason}, socket) do
     {:noreply,
      socket
      |> assign(:loading, false)
-     |> assign(:error, reason)
-     |> assign(:streaming_message, "")}
+     |> assign(:status_message, nil)
+     |> assign(:error, "Failed to start Ollama: #{reason}")}
+  end
+
+  @impl true
+  def handle_info(:recovery_failed, socket) do
+    {:noreply,
+     socket
+     |> assign(:loading, false)
+     |> assign(:status_message, nil)
+     |> assign(:error, "Cannot connect to Ollama. Please ensure it is running.")}
+  end
+
+  @impl true
+  def handle_info(:clear_status, socket) do
+    {:noreply, assign(socket, :status_message, nil)}
   end
 
   @impl true
@@ -269,6 +339,18 @@ defmodule OllamaChatWeb.ChatLive do
             </div>
           </div>
         </div>
+
+        <%!-- Status message display --%>
+        <%= if @status_message do %>
+          <div class="mb-4 p-4 bg-blue-900/50 border border-blue-500 rounded-lg text-blue-200">
+            <div class="flex items-start gap-2">
+              <.icon name="hero-information-circle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
+              <div>
+                <p class="text-sm">{@status_message}</p>
+              </div>
+            </div>
+          </div>
+        <% end %>
 
         <%!-- Error display --%>
         <%= if @error do %>
@@ -407,4 +489,29 @@ defmodule OllamaChatWeb.ChatLive do
   defp generate_id do
     "msg-#{System.unique_integer([:positive, :monotonic])}"
   end
+
+  defp is_connection_error?(reason) do
+    cond do
+      is_binary(reason) ->
+        String.contains?(reason, ["connection refused", "econnrefused", "timeout"])
+
+      is_map(reason) ->
+        Map.has_key?(reason, :reason) and reason.reason == :econnrefused
+
+      true ->
+        false
+    end
+  end
+
+  defp format_error(reason) when is_binary(reason), do: reason
+
+  defp format_error(reason) when is_map(reason) do
+    case reason do
+      %{reason: :econnrefused} -> "Cannot connect to Ollama server"
+      %{reason: :timeout} -> "Connection to Ollama timed out"
+      _ -> "An error occurred: #{inspect(reason)}"
+    end
+  end
+
+  defp format_error(reason), do: "An error occurred: #{inspect(reason)}"
 end

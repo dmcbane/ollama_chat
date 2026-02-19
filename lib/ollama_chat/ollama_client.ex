@@ -19,7 +19,7 @@ defmodule OllamaChat.OllamaClient do
       stream: stream
     }
 
-    case Req.post(chat_url(), json: body) do
+    case Req.post(chat_url(), json: body, retry: false) do
       {:ok, %Req.Response{status: 200, body: response_body}} ->
         {:ok, response_body}
 
@@ -57,6 +57,7 @@ defmodule OllamaChat.OllamaClient do
 
     case Req.post(chat_url(),
            json: body,
+           retry: false,
            into: fn {:data, data}, {req, resp} ->
              # Split by newlines as Ollama sends one JSON object per line
              data
@@ -99,7 +100,7 @@ defmodule OllamaChat.OllamaClient do
   Checks if Ollama is running by making a request to the API.
   """
   def ollama_running? do
-    case Req.get(tags_url()) do
+    case Req.get(tags_url(), retry: false, receive_timeout: 2000) do
       {:ok, %Req.Response{status: 200}} -> true
       _ -> false
     end
@@ -109,7 +110,7 @@ defmodule OllamaChat.OllamaClient do
   Lists available models from Ollama.
   """
   def list_models do
-    case Req.get(tags_url()) do
+    case Req.get(tags_url(), retry: false) do
       {:ok, %Req.Response{status: 200, body: %{"models" => models}}} ->
         {:ok, Enum.map(models, & &1["name"])}
 
