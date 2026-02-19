@@ -307,7 +307,7 @@ defmodule OllamaChatWeb.ChatLive do
           <div class="border-t border-slate-700 bg-slate-800/80 p-4">
             <.form for={@form} id="chat-form" phx-submit="send" phx-change="validate">
               <div class="flex gap-3 items-end">
-                <div class="flex-1 max-w-full overflow-hidden">
+                <div class="flex-1 max-w-full overflow-auto max-h-[500px]">
                   <.input
                     field={@form[:message]}
                     type="textarea"
@@ -316,7 +316,7 @@ defmodule OllamaChatWeb.ChatLive do
                     disabled={@loading}
                     rows="4"
                     phx-hook=".PreventEnterSubmit"
-                    class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize min-h-[100px]"
+                    class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize-y min-h-[100px]"
                   />
                 </div>
                 <button
