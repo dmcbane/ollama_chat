@@ -21,6 +21,9 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:messages_empty?, true)
       |> assign(:form, to_form(%{"message" => ""}))
       |> assign(:message_history, [])
+      |> assign(:conversations, [])
+      |> assign(:current_conversation_id, nil)
+      |> assign(:storage_warning, false)
       |> stream(:messages, [])
 
     if connected?(socket) do
@@ -122,14 +125,58 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_event("clear_chat", _params, socket) do
-    {:noreply,
-     socket
-     |> stream(:messages, [], reset: true)
-     |> assign(:messages_empty?, true)
-     |> assign(:streaming_message, "")
-     |> assign(:error, nil)
-     |> assign(:status_message, nil)
-     |> assign(:message_history, [])}
+    {:noreply, start_new_conversation(socket)}
+  end
+
+  @impl true
+  def handle_event("load_conversation", %{"conversation_id" => conversation_id}, socket) do
+    socket = push_event(socket, "load_conversation", %{conversation_id: conversation_id})
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("conversation_loaded", %{"conversation" => conversation}, socket) do
+    messages = conversation["messages"] || []
+
+    # Clear existing messages and load conversation
+    socket =
+      socket
+      |> stream(:messages, [], reset: true)
+      |> assign(:current_conversation_id, conversation["id"])
+      |> assign(:selected_model, conversation["model"])
+      |> assign(:message_history, messages)
+      |> assign(:messages_empty?, messages == [])
+
+    # Stream all messages
+    socket =
+      Enum.reduce(messages, socket, fn msg, acc ->
+        message = %{
+          id: "msg-#{msg["timestamp"]}-#{:rand.uniform(10000)}",
+          role: msg["role"],
+          content: msg["content"],
+          timestamp: msg["timestamp"],
+          streaming: false
+        }
+
+        stream_insert(acc, :messages, message)
+      end)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("conversations_loaded", %{"conversations" => conversations}, socket) do
+    {:noreply, assign(socket, :conversations, conversations)}
+  end
+
+  @impl true
+  def handle_event("storage_warning", %{"at_limit" => at_limit}, socket) do
+    {:noreply, assign(socket, :storage_warning, at_limit)}
+  end
+
+  @impl true
+  def handle_event("conversation_saved", %{"conversation_id" => conversation_id}, socket) do
+    {:noreply, assign(socket, :current_conversation_id, conversation_id)}
   end
 
   @impl true
@@ -190,12 +237,23 @@ defmodule OllamaChatWeb.ChatLive do
       streaming: false
     }
 
+    updated_history = [final_message | socket.assigns.message_history]
+
     socket =
       socket
       |> stream_insert(:messages, final_message)
       |> assign(:loading, false)
       |> assign(:streaming_message, "")
-      |> assign(:message_history, [final_message | socket.assigns.message_history])
+      |> assign(:message_history, updated_history)
+
+    # Auto-save conversation after each completed exchange
+    conversation_data = %{
+      messages: Enum.reverse(updated_history),
+      model: socket.assigns.selected_model,
+      conversation_id: socket.assigns.current_conversation_id
+    }
+
+    socket = push_event(socket, "save_conversation", conversation_data)
 
     {:noreply, socket}
   end
@@ -330,12 +388,40 @@ defmodule OllamaChatWeb.ChatLive do
                 </div>
               <% end %>
 
+              <%!-- Conversations selector --%>
+              <div class="relative" id="conversations-dropdown" phx-hook=".ConversationManager">
+                <label class="text-sm text-gray-300 mb-1 block">Conversations</label>
+                <select
+                  class="bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[200px]"
+                  phx-change="load_conversation"
+                  name="conversation_id"
+                >
+                  <option value="" selected={@current_conversation_id == nil}>
+                    <%= if @current_conversation_id == nil do %>
+                      ✓
+                    <% end %>
+                    New Chat
+                  </option>
+                  <option
+                    :for={conv <- @conversations}
+                    value={conv["id"]}
+                    selected={conv["id"] == @current_conversation_id}
+                  >
+                    <%= if conv["id"] == @current_conversation_id do %>
+                      ✓
+                    <% end %>
+                    {conv["title"]}
+                  </option>
+                </select>
+              </div>
+
               <button
                 type="button"
                 phx-click="clear_chat"
-                class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
+                class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700 mt-6"
+                title="New Chat"
               >
-                <.icon name="hero-trash" class="w-5 h-5" />
+                <.icon name="hero-plus-circle" class="w-5 h-5" />
               </button>
             </div>
           </div>
@@ -482,6 +568,156 @@ defmodule OllamaChatWeb.ChatLive do
         }
       }
     </script>
+
+    <%!-- Conversation Manager hook for localStorage persistence --%>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".ConversationManager">
+      export default {
+        mounted() {
+          this.storageKey = "ollama_chat_conversations";
+          this.maxConversations = 100;
+          this.warnAtConversations = 90;
+
+          // Load conversations from localStorage
+          this.loadConversations();
+
+          // Listen for save events from LiveView
+          this.handleEvent("save_conversation", (data) => {
+            this.saveConversation(data);
+          });
+
+          // Listen for new conversation events
+          this.handleEvent("new_conversation", () => {
+            this.pushEvent("conversations_loaded", { conversations: this.getConversations() });
+          });
+
+          // Listen for load conversation events
+          this.handleEvent("load_conversation", (data) => {
+            const conversation = this.getConversation(data.conversation_id);
+            if (conversation) {
+              this.pushEvent("conversation_loaded", { conversation: conversation });
+            }
+          });
+        },
+
+        loadConversations() {
+          const conversations = this.getConversations();
+          this.pushEvent("conversations_loaded", { conversations: conversations });
+
+          // Check storage warning
+          if (conversations.length >= this.warnAtConversations) {
+            this.pushEvent("storage_warning", { at_limit: conversations.length >= this.maxConversations });
+          }
+        },
+
+        getConversations() {
+          try {
+            const data = localStorage.getItem(this.storageKey);
+            if (!data) return [];
+
+            const parsed = JSON.parse(data);
+            // Return sorted by updated_at descending (newest first)
+            return parsed.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+          } catch (e) {
+            console.error("Error loading conversations:", e);
+            return [];
+          }
+        },
+
+        getConversation(id) {
+          const conversations = this.getConversations();
+          return conversations.find(c => c.id === id);
+        },
+
+        saveConversation(data) {
+          const { messages, model, conversation_id } = data;
+
+          if (!messages || messages.length === 0) return;
+
+          const conversations = this.getConversations();
+          const now = new Date().toISOString();
+
+          // Generate conversation ID if not provided
+          const convId = conversation_id || `conv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+          // Generate title from first user message (first 50 chars)
+          const firstUserMessage = messages.find(m => m.role === "user");
+          const title = firstUserMessage
+            ? firstUserMessage.content.substring(0, 50) + (firstUserMessage.content.length > 50 ? "..." : "")
+            : "Untitled Conversation";
+
+          // Find existing conversation or create new
+          const existingIndex = conversations.findIndex(c => c.id === convId);
+
+          const conversation = {
+            id: convId,
+            title: title,
+            model: model,
+            messages: messages,
+            created_at: existingIndex >= 0 ? conversations[existingIndex].created_at : now,
+            updated_at: now
+          };
+
+          if (existingIndex >= 0) {
+            // Update existing
+            conversations[existingIndex] = conversation;
+          } else {
+            // Check if we need to remove old conversations
+            if (conversations.length >= this.maxConversations) {
+              // Remove oldest conversation (last in sorted array)
+              const removed = conversations.pop();
+              // TODO: Offer export before deletion
+              console.log("Removed oldest conversation:", removed.title);
+            }
+
+            // Add new conversation
+            conversations.unshift(conversation);
+          }
+
+          // Save to localStorage
+          try {
+            localStorage.setItem(this.storageKey, JSON.stringify(conversations));
+
+            // Update LiveView with current conversation ID
+            this.pushEvent("conversation_saved", { conversation_id: convId });
+
+            // Reload conversation list
+            this.loadConversations();
+          } catch (e) {
+            console.error("Error saving conversation:", e);
+            // Check if quota exceeded
+            if (e.name === "QuotaExceededError") {
+              this.pushEvent("storage_error", { message: "Storage quota exceeded" });
+            }
+          }
+        },
+
+        formatTimestamp(timestamp) {
+          const date = new Date(timestamp);
+          const now = new Date();
+          const isToday = date.toDateString() === now.toDateString();
+
+          if (isToday) {
+            // Relative time for today
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+
+            if (diffMins < 1) return "Just now";
+            if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+            if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+          }
+
+          // Absolute time for older dates
+          return date.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+            hour: 'numeric',
+            minute: '2-digit'
+          });
+        }
+      }
+    </script>
     """
   end
 
@@ -489,6 +725,18 @@ defmodule OllamaChatWeb.ChatLive do
 
   defp generate_id do
     "msg-#{System.unique_integer([:positive, :monotonic])}"
+  end
+
+  defp start_new_conversation(socket) do
+    socket
+    |> stream(:messages, [], reset: true)
+    |> assign(:messages_empty?, true)
+    |> assign(:streaming_message, "")
+    |> assign(:error, nil)
+    |> assign(:status_message, nil)
+    |> assign(:message_history, [])
+    |> assign(:current_conversation_id, nil)
+    |> push_event("new_conversation", %{})
   end
 
   defp is_connection_error?(reason) do
