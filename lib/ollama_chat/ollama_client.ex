@@ -76,8 +76,11 @@ defmodule OllamaChat.OllamaClient do
              {:cont, {req, resp}}
            end
          ) do
-      {:ok, _} ->
+      {:ok, %Req.Response{status: 200}} ->
         :ok
+
+      {:ok, %Req.Response{status: status, body: body}} ->
+        {:error, "Ollama API returned status #{status}: #{inspect(body)}"}
 
       {:error, error} ->
         if connection_refused?(error) do
@@ -141,11 +144,17 @@ defmodule OllamaChat.OllamaClient do
         {:error, "OLLAMA_START_COMMAND environment variable not set"}
 
       command ->
-        case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
+        # Run command in background by appending &
+        background_command = "#{command} > /dev/null 2>&1 &"
+
+        case System.cmd("sh", ["-c", background_command], stderr_to_stdout: true) do
           {_output, 0} ->
-            # Wait for Ollama to start
-            Process.sleep(3000)
-            :ok
+            # Wait for Ollama to start and verify it's responding
+            # Poll for up to 10 seconds
+            case wait_for_ollama_ready(10) do
+              :ok -> :ok
+              :timeout -> {:error, "Ollama started but not responding after 10 seconds"}
+            end
 
           {output, exit_code} ->
             {:error, "Failed to start Ollama (exit code #{exit_code}): #{output}"}
@@ -171,6 +180,31 @@ defmodule OllamaChat.OllamaClient do
 
   defp ollama_start_command do
     Application.get_env(:ollama_chat, :ollama_start_command)
+  end
+
+  defp wait_for_ollama_ready(max_seconds) do
+    wait_for_ollama_ready(max_seconds, 0)
+  end
+
+  defp wait_for_ollama_ready(max_seconds, elapsed) when elapsed >= max_seconds do
+    :timeout
+  end
+
+  defp wait_for_ollama_ready(max_seconds, elapsed) do
+    if ollama_running?() do
+      # Also verify we can list models
+      case list_models() do
+        {:ok, _models} ->
+          :ok
+
+        _error ->
+          Process.sleep(500)
+          wait_for_ollama_ready(max_seconds, elapsed + 0.5)
+      end
+    else
+      Process.sleep(500)
+      wait_for_ollama_ready(max_seconds, elapsed + 0.5)
+    end
   end
 
   defp connection_refused?(error) do
