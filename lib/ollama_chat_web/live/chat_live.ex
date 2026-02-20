@@ -245,6 +245,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:loading, false)
       |> assign(:streaming_message, "")
       |> assign(:message_history, updated_history)
+      |> assign(:ollama_status, :running)
 
     # Auto-save conversation after each completed exchange
     conversation_data = %{
@@ -311,6 +312,9 @@ defmodule OllamaChatWeb.ChatLive do
   def handle_info({:recovery_success, _message_id}, socket) do
     # Clear status message after a delay
     Process.send_after(self(), :clear_status, 3000)
+
+    # Reload models to update the list and confirm Ollama is ready
+    send(self(), :load_models)
 
     {:noreply,
      socket
