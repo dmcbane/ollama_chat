@@ -146,7 +146,8 @@ defmodule OllamaChatWeb.ChatLive do
         {:noreply,
          socket
          |> assign(:available_models, models)
-         |> assign(:selected_model, List.first(models))}
+         |> assign(:selected_model, List.first(models))
+         |> assign(:ollama_status, :running)}
 
       {:ok, []} ->
         {:noreply, assign(socket, :available_models, [])}
