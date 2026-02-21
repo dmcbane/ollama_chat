@@ -127,3 +127,164 @@
 #messages {
     scroll-behavior: smooth;
 }
+
+/* Markdown prose styles for assistant messages inside dark bg-slate-700 bubbles */
+.prose-chat {
+    line-height: 1.65;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.prose-chat > *:first-child {
+    margin-top: 0;
+}
+
+.prose-chat > *:last-child {
+    margin-bottom: 0;
+}
+
+/* Headings */
+.prose-chat h1 {
+    font-size: 1.5em;
+    font-weight: 700;
+    margin: 1em 0 0.5em;
+}
+
+.prose-chat h2 {
+    font-size: 1.3em;
+    font-weight: 600;
+    margin: 1em 0 0.4em;
+}
+
+.prose-chat h3 {
+    font-size: 1.15em;
+    font-weight: 600;
+    margin: 0.8em 0 0.3em;
+}
+
+.prose-chat h4,
+.prose-chat h5,
+.prose-chat h6 {
+    font-size: 1em;
+    font-weight: 600;
+    margin: 0.6em 0 0.2em;
+}
+
+/* Paragraphs */
+.prose-chat p {
+    margin: 0.5em 0;
+}
+
+/* Code blocks */
+.prose-chat pre {
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    margin: 0.75em 0;
+    overflow-x: auto;
+    font-size: 0.875em;
+    line-height: 1.5;
+}
+
+.prose-chat pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    font-size: inherit;
+    color: inherit;
+}
+
+/* Inline code */
+.prose-chat code {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 0.15em 0.35em;
+    border-radius: 0.25rem;
+    font-size: 0.875em;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Lists */
+.prose-chat ul {
+    list-style-type: disc;
+    padding-left: 1.5em;
+    margin: 0.5em 0;
+}
+
+.prose-chat ol {
+    list-style-type: decimal;
+    padding-left: 1.5em;
+    margin: 0.5em 0;
+}
+
+.prose-chat li {
+    margin: 0.2em 0;
+}
+
+.prose-chat li > ul,
+.prose-chat li > ol {
+    margin: 0.1em 0;
+}
+
+/* Tables */
+.prose-chat table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.75em 0;
+    font-size: 0.9em;
+}
+
+.prose-chat th {
+    background: rgba(0, 0, 0, 0.25);
+    font-weight: 600;
+    text-align: left;
+    padding: 0.4em 0.75em;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.prose-chat td {
+    padding: 0.35em 0.75em;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.prose-chat tr:nth-child(even) {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+/* Blockquotes */
+.prose-chat blockquote {
+    border-left: 3px solid rgba(147, 197, 253, 0.5);
+    padding-left: 1em;
+    margin: 0.75em 0;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* Links */
+.prose-chat a {
+    color: #93c5fd;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.prose-chat a:hover {
+    color: #bfdbfe;
+}
+
+/* Horizontal rules */
+.prose-chat hr {
+    border: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
+    margin: 1em 0;
+}
+
+/* Images */
+.prose-chat img {
+    max-width: 100%;
+    border-radius: 0.5rem;
+    margin: 0.5em 0;
+}
+
+/* Strikethrough */
+.prose-chat del {
+    text-decoration: line-through;
+    opacity: 0.7;
+}

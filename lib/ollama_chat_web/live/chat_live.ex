@@ -1,7 +1,7 @@
 defmodule OllamaChatWeb.ChatLive do
   use OllamaChatWeb, :live_view
 
-  alias OllamaChat.OllamaClient
+  alias OllamaChat.{Markdown, OllamaClient}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -51,6 +51,7 @@ defmodule OllamaChatWeb.ChatLive do
         id: generate_id(),
         role: "user",
         content: message,
+        html_content: nil,
         timestamp: DateTime.utc_now()
       }
 
@@ -61,6 +62,7 @@ defmodule OllamaChatWeb.ChatLive do
         id: assistant_message_id,
         role: "assistant",
         content: "",
+        html_content: nil,
         timestamp: DateTime.utc_now(),
         streaming: true
       }
@@ -147,13 +149,19 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:message_history, messages)
       |> assign(:messages_empty?, messages == [])
 
-    # Stream all messages
+    # Stream all messages, rendering markdown for assistant messages
     socket =
       Enum.reduce(messages, socket, fn msg, acc ->
+        html_content =
+          if msg["role"] == "assistant",
+            do: Markdown.render(msg["content"]),
+            else: nil
+
         message = %{
           id: "msg-#{msg["timestamp"]}-#{:rand.uniform(10000)}",
           role: msg["role"],
           content: msg["content"],
+          html_content: html_content,
           timestamp: msg["timestamp"],
           streaming: false
         }
@@ -214,6 +222,7 @@ defmodule OllamaChatWeb.ChatLive do
       id: message_id,
       role: "assistant",
       content: new_content,
+      html_content: nil,
       timestamp: DateTime.utc_now(),
       streaming: true
     }
@@ -228,11 +237,14 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_info({:stream_done, message_id}, socket) do
-    # Finalize the message
+    # Finalize the message with rendered markdown
+    raw_content = socket.assigns.streaming_message
+
     final_message = %{
       id: message_id,
       role: "assistant",
-      content: socket.assigns.streaming_message,
+      content: raw_content,
+      html_content: Markdown.render(raw_content),
       timestamp: DateTime.utc_now(),
       streaming: false
     }
@@ -484,9 +496,11 @@ defmodule OllamaChatWeb.ChatLive do
                 <% else %>
                   <div class="flex justify-start">
                     <div class="bg-slate-700 text-white rounded-2xl rounded-tl-sm px-6 py-3 max-w-[80%] shadow-lg">
-                      <p class="whitespace-pre-wrap break-words">{message.content}</p>
                       <%= if message.streaming do %>
+                        <p class="whitespace-pre-wrap break-words">{message.content}</p>
                         <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
+                      <% else %>
+                        <div class="prose-chat">{message.html_content}</div>
                       <% end %>
                     </div>
                   </div>
