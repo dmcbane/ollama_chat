@@ -164,14 +164,163 @@ defmodule OllamaChatWeb.ChatLiveTest do
     test "displays error messages when present", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
-      # Simulate an error by sending a message to the LiveView
       send(view.pid, {:stream_error, "test-msg-id", "Test error message"})
-
-      # Give it time to process
-      Process.sleep(50)
+      _ = :sys.get_state(view.pid)
 
       html = render(view)
       assert html =~ "Test error message" or html =~ "Error"
+    end
+
+    test "displays connection error with recovery message", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      error = %Req.TransportError{reason: :econnrefused}
+      send(view.pid, {:stream_error, "test-msg-id", error})
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "Attempting to reconnect"
+    end
+  end
+
+  describe "streaming message flow" do
+    test "stream_chunk updates assistant message content", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      msg_id = "test-stream-1"
+
+      # Simulate the start of a streaming response by injecting a placeholder
+      send(view.pid, {:stream_chunk, msg_id, "Hello "})
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "Hello"
+    end
+
+    test "stream_chunk accumulates content across multiple chunks", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      msg_id = "test-stream-2"
+
+      send(view.pid, {:stream_chunk, msg_id, "Hello "})
+      _ = :sys.get_state(view.pid)
+      send(view.pid, {:stream_chunk, msg_id, "world!"})
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "Hello world!"
+    end
+
+    test "streaming message shows cursor animation", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      msg_id = "test-stream-3"
+
+      send(view.pid, {:stream_chunk, msg_id, "Thinking..."})
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "animate-pulse"
+    end
+
+    test "stream_done renders markdown and removes cursor", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      msg_id = "test-stream-4"
+
+      # Stream some markdown content
+      send(view.pid, {:stream_chunk, msg_id, "**bold text**"})
+      _ = :sys.get_state(view.pid)
+
+      # Finalize the stream
+      send(view.pid, {:stream_done, msg_id})
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+
+      # Should contain rendered markdown (not raw markdown syntax)
+      assert html =~ "<strong>bold text</strong>"
+      # Streaming cursor should be gone (the w-2 h-4 blinking cursor span)
+      refute html =~ "w-2 h-4 bg-white"
+    end
+
+    test "stream_done renders code blocks with syntax highlighting", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      msg_id = "test-stream-5"
+
+      code = "```elixir\ndef hello, do: :world\n```"
+      send(view.pid, {:stream_chunk, msg_id, code})
+      _ = :sys.get_state(view.pid)
+      send(view.pid, {:stream_done, msg_id})
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "language-elixir"
+      assert html =~ "prose-chat"
+    end
+
+    test "stream_done clears loading state", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      msg_id = "test-stream-6"
+
+      send(view.pid, {:stream_chunk, msg_id, "Done"})
+      _ = :sys.get_state(view.pid)
+      send(view.pid, {:stream_done, msg_id})
+      _ = :sys.get_state(view.pid)
+
+      # Send button should not be in disabled/loading state
+      html = render(view)
+      refute html =~ "Sending..."
+    end
+  end
+
+  describe "conversation loading" do
+    test "renders markdown for assistant messages in loaded conversations", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      conversation = %{
+        "id" => "test-conv-1",
+        "model" => "llama3",
+        "messages" => [
+          %{"role" => "user", "content" => "Hello", "timestamp" => "2024-01-01T00:00:00Z"},
+          %{
+            "role" => "assistant",
+            "content" => "**Hi there!** How can I help?",
+            "timestamp" => "2024-01-01T00:00:01Z"
+          }
+        ]
+      }
+
+      render_hook(view, "conversation_loaded", %{"conversation" => conversation})
+
+      html = render(view)
+      assert html =~ "<strong>Hi there!</strong>"
+      assert html =~ "prose-chat"
+    end
+
+    test "keeps user messages as plain text in loaded conversations", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      conversation = %{
+        "id" => "test-conv-2",
+        "model" => "llama3",
+        "messages" => [
+          %{
+            "role" => "user",
+            "content" => "**not bold** just text",
+            "timestamp" => "2024-01-01T00:00:00Z"
+          }
+        ]
+      }
+
+      render_hook(view, "conversation_loaded", %{"conversation" => conversation})
+
+      html = render(view)
+      # User messages should NOT be rendered as markdown
+      refute html =~ "<strong>not bold</strong>"
+      assert html =~ "**not bold** just text"
     end
   end
 
@@ -179,7 +328,6 @@ defmodule OllamaChatWeb.ChatLiveTest do
     test "sets correct page title", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/")
 
-      # Check that the page title is in the HTML
       assert html =~ "Ollama Chat"
     end
   end

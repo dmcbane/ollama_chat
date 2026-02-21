@@ -3,6 +3,8 @@ defmodule OllamaChat.OllamaClient do
   Client for interacting with the Ollama API.
   """
 
+  require Logger
+
   @default_base_url "http://localhost:11434"
   @default_model "llama3"
 
@@ -12,6 +14,8 @@ defmodule OllamaChat.OllamaClient do
   def chat(messages, opts \\ []) do
     model = Keyword.get(opts, :model, default_model())
     stream = Keyword.get(opts, :stream, false)
+
+    Logger.info("Sending chat request to model=#{model} with #{length(messages)} messages")
 
     body = %{
       model: model,
@@ -24,10 +28,13 @@ defmodule OllamaChat.OllamaClient do
         {:ok, response_body}
 
       {:ok, %Req.Response{status: status, body: body}} ->
+        Logger.warning("Ollama API returned unexpected status=#{status}")
         {:error, "Ollama API returned status #{status}: #{inspect(body)}"}
 
       {:error, error} ->
         if connection_refused?(error) do
+          Logger.warning("Connection refused, attempting to start Ollama")
+
           case ensure_ollama_running() do
             :ok ->
               # Retry after starting Ollama
@@ -38,6 +45,7 @@ defmodule OllamaChat.OllamaClient do
               {:error, "Failed to start Ollama: #{reason}"}
           end
         else
+          Logger.error("Chat request failed: #{inspect(error)}")
           {:error, "HTTP request failed: #{inspect(error)}"}
         end
     end
@@ -48,6 +56,8 @@ defmodule OllamaChat.OllamaClient do
   """
   def chat_stream(messages, callback, opts \\ []) do
     model = Keyword.get(opts, :model, default_model())
+
+    Logger.info("Starting streaming chat with model=#{model}")
 
     body = %{
       model: model,
@@ -68,7 +78,7 @@ defmodule OllamaChat.OllamaClient do
                    callback.(chunk)
 
                  {:error, _} ->
-                   # Skip invalid JSON chunks
+                   Logger.debug("Skipping invalid JSON chunk in stream")
                    :ok
                end
              end)
@@ -77,16 +87,19 @@ defmodule OllamaChat.OllamaClient do
            end
          ) do
       {:ok, %Req.Response{status: 200}} ->
+        Logger.info("Streaming chat completed successfully")
         :ok
 
       {:ok, %Req.Response{status: status, body: body}} ->
+        Logger.warning("Streaming chat returned unexpected status=#{status}")
         {:error, "Ollama API returned status #{status}: #{inspect(body)}"}
 
       {:error, error} ->
         if connection_refused?(error) do
+          Logger.warning("Stream connection refused, attempting to start Ollama")
+
           case ensure_ollama_running() do
             :ok ->
-              # Retry after starting Ollama
               Process.sleep(2000)
               chat_stream(messages, callback, opts)
 
@@ -94,6 +107,7 @@ defmodule OllamaChat.OllamaClient do
               {:error, "Failed to start Ollama: #{reason}"}
           end
         else
+          Logger.error("Streaming chat failed: #{inspect(error)}")
           {:error, "HTTP request failed: #{inspect(error)}"}
         end
     end
@@ -115,12 +129,16 @@ defmodule OllamaChat.OllamaClient do
   def list_models do
     case Req.get(tags_url(), retry: false) do
       {:ok, %Req.Response{status: 200, body: %{"models" => models}}} ->
-        {:ok, Enum.map(models, & &1["name"])}
+        model_names = Enum.map(models, & &1["name"])
+        Logger.info("Loaded #{length(model_names)} models from Ollama")
+        {:ok, model_names}
 
       {:ok, %Req.Response{status: status}} ->
+        Logger.warning("Failed to list models, status=#{status}")
         {:error, "Failed to list models, status: #{status}"}
 
       {:error, error} ->
+        Logger.warning("Failed to list models: #{inspect(error)}")
         {:error, "Failed to list models: #{inspect(error)}"}
     end
   end
@@ -132,6 +150,7 @@ defmodule OllamaChat.OllamaClient do
     if ollama_running?() do
       :ok
     else
+      Logger.info("Ollama not running, attempting to start")
       start_ollama()
     end
   end
@@ -141,22 +160,27 @@ defmodule OllamaChat.OllamaClient do
   defp start_ollama do
     case ollama_start_command() do
       nil ->
+        Logger.warning("No OLLAMA_START_COMMAND configured, cannot auto-start")
         {:error, "OLLAMA_START_COMMAND environment variable not set"}
 
       command ->
-        # Run command in background by appending &
+        Logger.info("Starting Ollama with command: #{command}")
         background_command = "#{command} > /dev/null 2>&1 &"
 
         case System.cmd("sh", ["-c", background_command], stderr_to_stdout: true) do
           {_output, 0} ->
-            # Wait for Ollama to start and verify it's responding
-            # Poll for up to 10 seconds
             case wait_for_ollama_ready(10) do
-              :ok -> :ok
-              :timeout -> {:error, "Ollama started but not responding after 10 seconds"}
+              :ok ->
+                Logger.info("Ollama started successfully")
+                :ok
+
+              :timeout ->
+                Logger.error("Ollama started but not responding after 10 seconds")
+                {:error, "Ollama started but not responding after 10 seconds"}
             end
 
           {output, exit_code} ->
+            Logger.error("Failed to start Ollama (exit_code=#{exit_code}): #{output}")
             {:error, "Failed to start Ollama (exit code #{exit_code}): #{output}"}
         end
     end

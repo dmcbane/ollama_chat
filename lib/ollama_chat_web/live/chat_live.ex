@@ -3,6 +3,8 @@ defmodule OllamaChatWeb.ChatLive do
 
   alias OllamaChat.{Markdown, OllamaClient}
 
+  require Logger
+
   @impl true
   def mount(_params, _session, socket) do
     socket =
@@ -46,6 +48,10 @@ defmodule OllamaChatWeb.ChatLive do
     if message == "" do
       {:noreply, socket}
     else
+      Logger.info(
+        "User sent message (#{String.length(message)} chars) to model=#{socket.assigns.selected_model}"
+      )
+
       # Add user message
       user_message = %{
         id: generate_id(),
@@ -139,6 +145,7 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_event("conversation_loaded", %{"conversation" => conversation}, socket) do
     messages = conversation["messages"] || []
+    Logger.info("Loading conversation id=#{conversation["id"]} with #{length(messages)} messages")
 
     # Clear existing messages and load conversation
     socket =
@@ -240,6 +247,10 @@ defmodule OllamaChatWeb.ChatLive do
     # Finalize the message with rendered markdown
     raw_content = socket.assigns.streaming_message
 
+    Logger.info(
+      "Stream completed for message_id=#{message_id} (#{String.length(raw_content)} chars)"
+    )
+
     final_message = %{
       id: message_id,
       role: "assistant",
@@ -273,6 +284,8 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_info({:stream_error, message_id, reason}, socket) do
+    Logger.error("Stream error for message_id=#{message_id}: #{inspect(reason)}")
+
     # Remove the failed assistant message
     socket =
       socket
@@ -282,6 +295,7 @@ defmodule OllamaChatWeb.ChatLive do
 
     # Check if it's a connection error and attempt recovery
     if is_connection_error?(reason) do
+      Logger.info("Connection error detected, initiating recovery")
       send(self(), {:attempt_recovery, message_id})
 
       {:noreply,
@@ -322,6 +336,8 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_info({:recovery_success, _message_id}, socket) do
+    Logger.info("Ollama recovery successful")
+
     # Clear status message after a delay
     Process.send_after(self(), :clear_status, 3000)
 
@@ -336,6 +352,8 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_info({:recovery_failed, reason}, socket) do
+    Logger.error("Ollama recovery failed: #{reason}")
+
     {:noreply,
      socket
      |> assign(:loading, false)
@@ -345,6 +363,8 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_info(:recovery_failed, socket) do
+    Logger.error("Ollama recovery failed: not responding")
+
     {:noreply,
      socket
      |> assign(:loading, false)
