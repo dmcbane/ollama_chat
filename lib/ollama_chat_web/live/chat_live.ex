@@ -26,6 +26,9 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:conversations, [])
       |> assign(:current_conversation_id, nil)
       |> assign(:storage_warning, false)
+      |> assign(:system_prompt, "")
+      |> assign(:system_prompt_open, false)
+      |> assign(:stream_timeout_ref, nil)
       |> stream(:messages, [])
 
     if connected?(socket) do
@@ -81,6 +84,14 @@ defmodule OllamaChatWeb.ChatLive do
           %{role: msg.role, content: msg.content}
         end)
 
+      # Prepend system prompt if set
+      messages_for_api =
+        if socket.assigns.system_prompt != "" do
+          [%{role: "system", content: socket.assigns.system_prompt} | messages_for_api]
+        else
+          messages_for_api
+        end
+
       socket =
         socket
         |> stream_insert(:messages, user_message)
@@ -122,7 +133,11 @@ defmodule OllamaChatWeb.ChatLive do
         end
       end)
 
-      {:noreply, socket}
+      # Schedule initial stream timeout
+      timeout_ref =
+        Process.send_after(self(), {:stream_timeout, assistant_message_id}, stream_timeout_ms())
+
+      {:noreply, assign(socket, :stream_timeout_ref, timeout_ref)}
     end
   end
 
@@ -155,6 +170,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:selected_model, conversation["model"])
       |> assign(:message_history, messages)
       |> assign(:messages_empty?, messages == [])
+      |> assign(:system_prompt, conversation["system_prompt"] || "")
 
     # Stream all messages, rendering markdown for assistant messages
     socket =
@@ -192,6 +208,27 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_event("conversation_saved", %{"conversation_id" => conversation_id}, socket) do
     {:noreply, assign(socket, :current_conversation_id, conversation_id)}
+  end
+
+  @impl true
+  def handle_event("export_conversation", %{"format" => format}, socket) do
+    socket =
+      push_event(socket, "export_conversation", %{
+        format: format,
+        conversation_id: socket.assigns.current_conversation_id
+      })
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_system_prompt", _params, socket) do
+    {:noreply, assign(socket, :system_prompt_open, !socket.assigns.system_prompt_open)}
+  end
+
+  @impl true
+  def handle_event("update_system_prompt", %{"system_prompt" => prompt}, socket) do
+    {:noreply, assign(socket, :system_prompt, prompt)}
   end
 
   @impl true
@@ -234,16 +271,26 @@ defmodule OllamaChatWeb.ChatLive do
       streaming: true
     }
 
+    # Reset stream timeout on each chunk
+    cancel_stream_timeout(socket.assigns.stream_timeout_ref)
+
+    timeout_ref =
+      Process.send_after(self(), {:stream_timeout, message_id}, stream_timeout_ms())
+
     socket =
       socket
       |> stream_insert(:messages, updated_message)
       |> assign(:streaming_message, new_content)
+      |> assign(:stream_timeout_ref, timeout_ref)
 
     {:noreply, socket}
   end
 
   @impl true
   def handle_info({:stream_done, message_id}, socket) do
+    # Cancel stream timeout
+    cancel_stream_timeout(socket.assigns.stream_timeout_ref)
+
     # Finalize the message with rendered markdown
     raw_content = socket.assigns.streaming_message
 
@@ -269,12 +316,14 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:streaming_message, "")
       |> assign(:message_history, updated_history)
       |> assign(:ollama_status, :running)
+      |> assign(:stream_timeout_ref, nil)
 
     # Auto-save conversation after each completed exchange
     conversation_data = %{
       messages: Enum.reverse(updated_history),
       model: socket.assigns.selected_model,
-      conversation_id: socket.assigns.current_conversation_id
+      conversation_id: socket.assigns.current_conversation_id,
+      system_prompt: socket.assigns.system_prompt
     }
 
     socket = push_event(socket, "save_conversation", conversation_data)
@@ -286,12 +335,16 @@ defmodule OllamaChatWeb.ChatLive do
   def handle_info({:stream_error, message_id, reason}, socket) do
     Logger.error("Stream error for message_id=#{message_id}: #{inspect(reason)}")
 
+    # Cancel stream timeout
+    cancel_stream_timeout(socket.assigns.stream_timeout_ref)
+
     # Remove the failed assistant message
     socket =
       socket
       |> stream_delete(:messages, %{id: message_id})
       |> assign(:loading, false)
       |> assign(:streaming_message, "")
+      |> assign(:stream_timeout_ref, nil)
 
     # Check if it's a connection error and attempt recovery
     if is_connection_error?(reason) do
@@ -370,6 +423,30 @@ defmodule OllamaChatWeb.ChatLive do
      |> assign(:loading, false)
      |> assign(:status_message, nil)
      |> assign(:error, "Cannot connect to Ollama. Please ensure it is running.")}
+  end
+
+  @impl true
+  def handle_info({:stream_timeout, message_id}, socket) do
+    if socket.assigns.loading do
+      Logger.warning(
+        "Stream timeout for message_id=#{message_id} after #{stream_timeout_ms()}ms of inactivity"
+      )
+
+      socket =
+        socket
+        |> stream_delete(:messages, %{id: message_id})
+        |> assign(:loading, false)
+        |> assign(:streaming_message, "")
+        |> assign(:stream_timeout_ref, nil)
+        |> assign(
+          :error,
+          "Response timed out — the model stopped sending data. Try again or select a different model."
+        )
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -459,8 +536,90 @@ defmodule OllamaChatWeb.ChatLive do
               >
                 <.icon name="hero-plus-circle" class="w-5 h-5" />
               </button>
+
+              <%!-- Export dropdown --%>
+              <div class="relative mt-6" id="export-menu">
+                <button
+                  type="button"
+                  phx-click={JS.toggle(to: "#export-options")}
+                  disabled={@current_conversation_id == nil}
+                  class={[
+                    "px-4 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700",
+                    if(@current_conversation_id != nil,
+                      do: "hover:bg-slate-700",
+                      else: "opacity-50 cursor-not-allowed"
+                    )
+                  ]}
+                  title="Export conversation"
+                  id="export-button"
+                >
+                  <.icon name="hero-arrow-down-tray" class="w-5 h-5" />
+                </button>
+                <div
+                  id="export-options"
+                  class="hidden absolute right-0 mt-1 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden"
+                >
+                  <button
+                    type="button"
+                    phx-click={
+                      JS.push("export_conversation", value: %{format: "markdown"})
+                      |> JS.toggle(to: "#export-options")
+                    }
+                    class="w-full text-left px-4 py-2.5 text-sm text-white hover:bg-slate-700 transition-colors flex items-center gap-2"
+                    id="export-markdown-btn"
+                  >
+                    <.icon name="hero-document-text" class="w-4 h-4" /> Export as Markdown
+                  </button>
+                  <button
+                    type="button"
+                    phx-click={
+                      JS.push("export_conversation", value: %{format: "json"})
+                      |> JS.toggle(to: "#export-options")
+                    }
+                    class="w-full text-left px-4 py-2.5 text-sm text-white hover:bg-slate-700 transition-colors flex items-center gap-2"
+                    id="export-json-btn"
+                  >
+                    <.icon name="hero-code-bracket" class="w-4 h-4" /> Export as JSON
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
+        </div>
+
+        <%!-- System prompt panel --%>
+        <div class="mb-4">
+          <button
+            type="button"
+            phx-click="toggle_system_prompt"
+            class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
+          >
+            <.icon
+              name={if @system_prompt_open, do: "hero-chevron-down", else: "hero-chevron-right"}
+              class="w-4 h-4"
+            />
+            <span>System Prompt</span>
+            <%= if @system_prompt != "" do %>
+              <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">Active</span>
+            <% end %>
+          </button>
+          <%= if @system_prompt_open do %>
+            <div class="mt-2">
+              <.form
+                for={to_form(%{"system_prompt" => @system_prompt})}
+                id="system-prompt-form"
+                phx-change="update_system_prompt"
+              >
+                <textarea
+                  name="system_prompt"
+                  placeholder="Enter a system prompt to set the model's behavior (e.g., 'You are a helpful coding assistant')..."
+                  rows="3"
+                  class="w-full bg-slate-800 text-white border border-slate-700 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y placeholder-slate-500"
+                  phx-debounce="500"
+                >{@system_prompt}</textarea>
+              </.form>
+            </div>
+          <% end %>
         </div>
 
         <%!-- Status message display --%>
@@ -490,7 +649,11 @@ defmodule OllamaChatWeb.ChatLive do
 
         <%!-- Chat messages --%>
         <div class="bg-slate-800/50 rounded-xl shadow-2xl backdrop-blur-sm border border-slate-700 mb-6 overflow-hidden">
-          <div class="h-[600px] overflow-y-auto p-6 space-y-4 relative">
+          <div
+            id="messages-container"
+            phx-hook=".CopyMessage"
+            class="h-[600px] overflow-y-auto p-6 space-y-4 relative"
+          >
             <%= if @messages_empty? do %>
               <div class="text-center py-20 absolute inset-0 flex flex-col items-center justify-center">
                 <.icon
@@ -506,22 +669,49 @@ defmodule OllamaChatWeb.ChatLive do
               phx-update="stream"
               phx-hook=".ScrollToBottom"
             >
-              <div :for={{id, message} <- @streams.messages} id={id} class="animate-fade-in">
+              <div
+                :for={{id, message} <- @streams.messages}
+                id={id}
+                class="animate-fade-in group"
+                data-content={message.content}
+              >
                 <%= if message.role == "user" do %>
                   <div class="flex justify-end">
-                    <div class="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-6 py-3 max-w-[80%] shadow-lg">
-                      <p class="whitespace-pre-wrap break-words">{message.content}</p>
+                    <div class="relative">
+                      <button
+                        type="button"
+                        class="copy-btn absolute -left-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Copy message"
+                      >
+                        <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
+                        <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                      </button>
+                      <div class="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-6 py-3 max-w-[80%] shadow-lg">
+                        <p class="whitespace-pre-wrap break-words">{message.content}</p>
+                      </div>
                     </div>
                   </div>
                 <% else %>
                   <div class="flex justify-start">
-                    <div class="bg-slate-700 text-white rounded-2xl rounded-tl-sm px-6 py-3 max-w-[80%] shadow-lg">
-                      <%= if message.streaming do %>
-                        <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                        <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
-                      <% else %>
-                        <div class="prose-chat">{message.html_content}</div>
+                    <div class="relative">
+                      <%= if not message.streaming do %>
+                        <button
+                          type="button"
+                          class="copy-btn absolute -right-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Copy message"
+                        >
+                          <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
+                          <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                        </button>
                       <% end %>
+                      <div class="bg-slate-700 text-white rounded-2xl rounded-tl-sm px-6 py-3 max-w-[80%] shadow-lg">
+                        <%= if message.streaming do %>
+                          <p class="whitespace-pre-wrap break-words">{message.content}</p>
+                          <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
+                        <% else %>
+                          <div class="prose-chat">{message.html_content}</div>
+                        <% end %>
+                      </div>
                     </div>
                   </div>
                 <% end %>
@@ -593,6 +783,35 @@ defmodule OllamaChatWeb.ChatLive do
       }
     </script>
 
+    <%!-- Copy message to clipboard hook (event delegation) --%>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".CopyMessage">
+      export default {
+        mounted() {
+          this.el.addEventListener("click", (e) => {
+            const btn = e.target.closest(".copy-btn");
+            if (!btn) return;
+
+            const messageEl = btn.closest("[data-content]");
+            if (!messageEl) return;
+
+            const content = messageEl.getAttribute("data-content");
+            navigator.clipboard.writeText(content).then(() => {
+              const copyIcon = btn.querySelector(".copy-icon");
+              const checkIcon = btn.querySelector(".check-icon");
+              if (copyIcon && checkIcon) {
+                copyIcon.classList.add("hidden");
+                checkIcon.classList.remove("hidden");
+                setTimeout(() => {
+                  copyIcon.classList.remove("hidden");
+                  checkIcon.classList.add("hidden");
+                }, 2000);
+              }
+            });
+          });
+        }
+      }
+    </script>
+
     <%!-- Prevent Enter key from submitting form --%>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".PreventEnterSubmit">
       export default {
@@ -626,6 +845,26 @@ defmodule OllamaChatWeb.ChatLive do
           // Listen for new conversation events
           this.handleEvent("new_conversation", () => {
             this.pushEvent("conversations_loaded", { conversations: this.getConversations() });
+          });
+
+          // Listen for export events
+          this.handleEvent("export_conversation", ({ format, conversation_id }) => {
+            const conversation = this.getConversation(conversation_id);
+            if (!conversation) return;
+
+            let content, filename, mimeType;
+
+            if (format === "markdown") {
+              content = this.formatAsMarkdown(conversation);
+              filename = this.sanitizeFilename(conversation.title) + ".md";
+              mimeType = "text/markdown";
+            } else {
+              content = JSON.stringify(conversation, null, 2);
+              filename = this.sanitizeFilename(conversation.title) + ".json";
+              mimeType = "application/json";
+            }
+
+            this.downloadFile(content, filename, mimeType);
           });
 
           // Listen for load conversation events
@@ -667,7 +906,7 @@ defmodule OllamaChatWeb.ChatLive do
         },
 
         saveConversation(data) {
-          const { messages, model, conversation_id } = data;
+          const { messages, model, conversation_id, system_prompt } = data;
 
           if (!messages || messages.length === 0) return;
 
@@ -691,6 +930,7 @@ defmodule OllamaChatWeb.ChatLive do
             title: title,
             model: model,
             messages: messages,
+            system_prompt: system_prompt || "",
             created_at: existingIndex >= 0 ? conversations[existingIndex].created_at : now,
             updated_at: now
           };
@@ -727,6 +967,45 @@ defmodule OllamaChatWeb.ChatLive do
               this.pushEvent("storage_error", { message: "Storage quota exceeded" });
             }
           }
+        },
+
+        formatAsMarkdown(conversation) {
+          let md = `# ${conversation.title}\n\n`;
+          md += `**Model:** ${conversation.model}\n`;
+          md += `**Date:** ${conversation.created_at}\n`;
+
+          if (conversation.system_prompt) {
+            md += `**System Prompt:** ${conversation.system_prompt}\n`;
+          }
+
+          md += `\n---\n\n`;
+
+          for (const msg of (conversation.messages || [])) {
+            const role = msg.role === "user" ? "User" : "Assistant";
+            md += `### ${role}\n\n${msg.content}\n\n`;
+          }
+
+          return md.trimEnd() + "\n";
+        },
+
+        sanitizeFilename(title) {
+          return (title || "conversation")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "")
+            .substring(0, 50);
+        },
+
+        downloadFile(content, filename, mimeType) {
+          const blob = new Blob([content], { type: mimeType });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
         },
 
         formatTimestamp(timestamp) {
@@ -774,6 +1053,8 @@ defmodule OllamaChatWeb.ChatLive do
     |> assign(:status_message, nil)
     |> assign(:message_history, [])
     |> assign(:current_conversation_id, nil)
+    |> assign(:system_prompt, "")
+    |> assign(:system_prompt_open, false)
     |> push_event("new_conversation", %{})
   end
 
@@ -804,4 +1085,15 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   defp format_error(reason), do: "An error occurred: #{inspect(reason)}"
+
+  defp stream_timeout_ms do
+    Application.get_env(:ollama_chat, :stream_timeout_ms, 30_000)
+  end
+
+  defp cancel_stream_timeout(nil), do: :ok
+
+  defp cancel_stream_timeout(ref) do
+    Process.cancel_timer(ref)
+    :ok
+  end
 end
