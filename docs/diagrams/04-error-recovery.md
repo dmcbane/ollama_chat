@@ -10,32 +10,32 @@ stateDiagram-v2
     Streaming --> StreamError: Error received
 
     StreamError --> CheckConnection: handle_info stream_error
-    CheckConnection --> ShowError: Not a connection error
-    CheckConnection --> AttemptRecovery: Connection error<br/>(econnrefused/timeout)
+    CheckConnection --> ShowError: Not connection error
+    CheckConnection --> AttemptRecovery: econnrefused or timeout
 
-    AttemptRecovery --> SpawnRecovery: Show status message<br/>"Attempting to reconnect..."
-    SpawnRecovery --> EnsureRunning: spawn ensure_ollama_running/0
+    AttemptRecovery --> SpawnRecovery: Show reconnecting status
+    SpawnRecovery --> EnsureRunning: spawn ensure_ollama_running
 
-    EnsureRunning --> AlreadyRunning: ollama_running?() == true
-    EnsureRunning --> StartOllama: ollama_running?() == false
+    EnsureRunning --> AlreadyRunning: already running
+    EnsureRunning --> StartOllama: not running
 
-    StartOllama --> NoCommand: OLLAMA_START_COMMAND not set
-    StartOllama --> RunCommand: Execute start command
+    StartOllama --> NoCommand: no start command set
+    StartOllama --> RunCommand: execute start command
 
-    RunCommand --> WaitReady: Poll ollama_running?()<br/>up to 10 seconds
+    RunCommand --> WaitReady: poll up to 10 seconds
     WaitReady --> RecoverySuccess: Ollama responds
-    WaitReady --> RecoveryFailed: Timeout after 10s
+    WaitReady --> RecoveryFailed: timeout
 
     AlreadyRunning --> RecoverySuccess
     NoCommand --> RecoveryFailed
 
-    RecoverySuccess --> LoadModels: Reload available models
-    LoadModels --> [*]: Status: running
+    RecoverySuccess --> LoadModels: reload models
+    LoadModels --> [*]
 
     RecoveryFailed --> ShowError
-    ShowError --> [*]: Display error to user
+    ShowError --> [*]
 
-    StreamDone --> [*]: Update status: running
+    StreamDone --> [*]
 ```
 
 Recovery happens in two layers:
