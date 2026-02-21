@@ -11,7 +11,7 @@ A beautiful, real-time web-based chat interface for interacting with local Ollam
 - 🔀 Multi-model support with easy model switching
 - 📱 Responsive design for desktop and mobile
 - ⚡ Built with Phoenix LiveView for real-time updates
-- 🎯 No authentication required - perfect for local network use
+- 🎯 Designed for local use - just start and chat
 
 ## Prerequisites
 

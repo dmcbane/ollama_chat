@@ -15,7 +15,8 @@ This document describes the functional requirements and expected behavior for th
 - [Configuration](#configuration)
 - [Security](#security)
 - [Testing](#testing)
-- [Future Enhancements](#future-enhancements)
+- [Implemented Features](#implemented-features)
+- [Planned Enhancements](#planned-enhancements)
 
 ---
 
@@ -78,22 +79,19 @@ OllamaChat.Supervisor (:one_for_one)
 └── OllamaChatWeb.Endpoint        (HTTP/WebSocket server)
 ```
 
-### Stateless Design
+### No-Database Design
 
 **Requirement**: The application MUST operate without a traditional database.
 
-- All conversation state exists only in the LiveView process memory (`socket.assigns`)
-- Chat history is lost on page refresh or session disconnection
-- No persistent storage of messages, user data, or preferences
+- Active conversation state lives in the LiveView process memory (`socket.assigns`)
+- Conversation history is persisted client-side in browser localStorage
 - Configuration is provided entirely through environment variables
+- No server-side database or file-based storage required
 
 **Current Limitations**:
-- No conversation persistence across sessions
-- No multi-user data isolation
 - No conversation export/import
-- Single-session only (refreshing the page clears all history)
-
-**Rationale**: The MVP focuses on providing a lightweight, zero-dependency chat interface. Persistent storage is planned as a future enhancement (see [Future Enhancements](#future-enhancements)).
+- localStorage is browser-specific (conversations don't sync across browsers/devices)
+- Storage is capped at 100 conversations with automatic eviction of oldest
 
 ---
 
@@ -583,18 +581,13 @@ OllamaChat.Supervisor (:one_for_one)
 - Same-site policy: `Lax` (CSRF protection)
 - CSRF protection enabled via `protect_from_forgery` plug
 
-### No Authentication (Current)
+### Local-Only Design
 
-**Requirement**: The current MVP does NOT implement authentication.
+**Requirement**: The application is designed for local, single-user use. Authentication is not implemented and is out of scope.
 
-- The application is accessible to anyone who can reach the server
-- All users share the same Ollama instance
-- No user isolation or data separation
-- Suitable for personal use or trusted network environments only
-
-**Security Implications**:
+- The application is intended to run on a personal machine or trusted local network
+- No user isolation or multi-user support
 - In development: Bound to localhost (`127.0.0.1`), safe by default
-- In production: MUST be deployed behind a reverse proxy with authentication, or on a private network
 - The `OLLAMA_START_COMMAND` executes shell commands — MUST NOT be user-controllable
 
 ### Content Security
@@ -653,182 +646,105 @@ This runs:
 
 ---
 
-## Future Enhancements
+## Implemented Features
 
-This section documents planned features and open design questions. The application is intended for use by a small team.
+This section documents features that have been completed beyond the original MVP.
 
-### Conversation Persistence (Planned)
+### Conversation Persistence
 
-**Status**: Not implemented
+**Status**: Implemented
 
-**Description**: Save and load chat history across sessions so conversations survive page refreshes and server restarts.
+**Implementation**: Conversations are auto-saved to browser localStorage after each completed assistant response. The `ConversationManager` colocated JS hook handles all persistence.
 
-**Requirements**:
-- Conversations MUST be saved automatically (or on explicit save action)
-- Users MUST be able to list, open, and delete saved conversations
-- Each conversation MUST preserve the full message history and selected model
-- Conversations SHOULD have titles (auto-generated from first message or user-defined)
+- Conversations auto-save on every completed exchange
+- Users can list and switch between saved conversations via a dropdown selector
+- Each conversation preserves full message history, selected model, and system prompt
+- Titles are auto-generated from the first user message (first 50 chars)
+- Capped at 100 conversations; oldest are evicted when the limit is reached
+- Storage warning displayed when approaching the limit
 
-**Storage Options Under Consideration**:
+### Multiple Conversations
 
-**Option A: SQLite (via Ecto.SQLite3)**
-- Pro: Zero external dependencies, embedded database
-- Pro: Simple deployment (single file)
-- Con: Limited concurrent write performance
-- Con: Less suitable for multi-user scenarios
+**Status**: Implemented
 
-**Option B: PostgreSQL (via Ecto)**
-- Pro: Battle-tested with Phoenix, excellent concurrent access
-- Pro: Supports full-text search, JSONB for flexible metadata
-- Pro: Better for multi-user/team scenarios
-- Con: Requires external database service
-- Con: More complex deployment
+**Implementation**: Conversation selector dropdown in the header with a "New Chat" button. Each conversation has independent message history and model selection.
 
-**Option C: File-Based (JSON)**
-- Pro: Simplest implementation, human-readable files
-- Pro: Easy backup and portability
-- Con: No query capabilities
-- Con: Concurrency issues with file locking
-- Con: Performance degrades with many conversations
+- Users create new chats via the `+` button without losing the current conversation
+- Conversations are listed in the dropdown, sorted by most recently updated
+- Switching conversations reloads full message history from localStorage
+- Only one conversation streams at a time (inactive conversations consume no resources)
 
-**Data Model (Preliminary)**:
-```
-conversations
-├── id (UUID)
-├── title (string)
-├── model (string, Ollama model used)
-├── messages (JSON array of {role, content, timestamp})
-├── created_at (datetime)
-├── updated_at (datetime)
-└── user_id (optional, for future multi-user support)
-```
+### Markdown Rendering
 
-**Open Questions**:
-- Should conversations auto-save on every message or require explicit save?
-- What is the retention policy for old conversations?
-- Should conversation titles be auto-generated from the first user message?
+**Status**: Implemented
 
-### Multiple Concurrent Chats (Planned)
+**Implementation**: Server-side rendering via the `OllamaChat.Markdown` module. Raw markdown is rendered to HTML on `stream_done` and displayed in `.prose-chat` styled containers.
 
-**Status**: Not implemented
+- Assistant messages render full markdown (headings, bold, italic, links, lists, tables, blockquotes)
+- Code blocks have syntax highlighting with language detection
+- User messages remain as plain text
+- During streaming, raw text is shown; markdown renders on completion
+- Custom `.prose-chat` CSS styles for dark-themed message bubbles
 
-**Description**: Support multiple chat tabs or conversations simultaneously, allowing users to work on different topics in parallel.
+### System Prompt
 
-**Requirements**:
-- Users MUST be able to create new chat sessions without losing the current one
-- Users MUST be able to switch between active conversations
-- Each conversation MUST have independent message history and model selection
-- Inactive conversations MUST NOT consume streaming resources
+**Status**: Implemented
 
-**UI Options Under Consideration**:
+**Implementation**: Collapsible panel below the header with a textarea. System prompt is prepended as `%{role: "system"}` to API messages and persisted with the conversation.
 
-**Option A: Tab Bar**
-- Horizontal tabs above the chat area
-- New tab button (+) creates a fresh conversation
-- Tabs show conversation title or "New Chat"
+- Per-conversation system prompt, configurable via collapsible UI panel
+- "Active" badge shown when a system prompt is set
+- Persisted in localStorage alongside conversation data
+- Reset on new conversation, restored on conversation load
+- Changes take effect on the next message sent
 
-**Option B: Sidebar Conversation List**
-- Persistent sidebar listing all conversations
-- Current conversation highlighted
-- Collapsible for more chat space
+### Copy to Clipboard
 
-**Open Questions**:
-- Should multiple conversations be able to stream simultaneously?
-- How many concurrent conversations should be supported?
-- Should conversations be reorderable or pinnable?
+**Status**: Implemented
 
-### Markdown Rendering (Planned)
+**Implementation**: Copy button on each message bubble, visible on hover. Uses event delegation via a `.CopyMessage` colocated hook on the scroll container.
 
-**Status**: Not implemented — messages currently displayed as plain text with `whitespace-pre-wrap`
+- Clipboard icon on each message, hidden until hover (`group`/`group-hover`)
+- `navigator.clipboard.writeText()` with icon swap feedback (clipboard → checkmark for 2s)
+- Hidden on streaming assistant messages (only shown when complete)
+- Raw message content copied (not rendered HTML)
 
-**Description**: Render LLM responses as formatted markdown with syntax highlighting, enabling rich display of code blocks, lists, tables, and other markdown elements.
+### Streaming Timeout
 
-**Requirements**:
-- Assistant messages MUST render markdown to styled HTML
-- Code blocks MUST have syntax highlighting with language detection
-- Inline code, bold, italic, links, and lists MUST render correctly
-- User messages MAY remain as plain text (or optionally render markdown)
-- Markdown rendering MUST work correctly during streaming (partial content)
-- Copy button SHOULD be available on code blocks
+**Status**: Implemented
 
-**Technical Considerations**:
-- Server-side rendering via `Earmark` or `MDEx` (Elixir markdown libraries)
-- Client-side rendering via JavaScript (e.g., `marked` + `highlight.js`)
-- Streaming complicates server-side rendering (incomplete markdown during stream)
-- XSS prevention: Rendered HTML MUST be sanitized to prevent script injection
+**Implementation**: Inactivity-based timeout using `Process.send_after/3`. Timer resets on each chunk received. Configurable via `OLLAMA_STREAM_TIMEOUT_MS` env var (default: 30s).
 
-**Open Questions**:
-- Should rendering happen server-side or client-side?
-- How to handle incomplete markdown during streaming (e.g., unclosed code block)?
-- Should LaTeX/math rendering be supported?
+- Prevents the UI from hanging indefinitely on unresponsive models
+- Each `stream_chunk` cancels the previous timer and starts a fresh one
+- On timeout: streaming message is removed, error is displayed, loading state is cleared
+- Guarded against stale timeouts (checks `loading` assign before acting)
 
-### Authentication and Multi-User Support (Under Consideration)
+---
 
-**Status**: Not started
+## Planned Enhancements
 
-**Description**: Add user authentication to support team use with isolated conversations.
-
-**Requirements**:
-- Users MUST authenticate before accessing the chat interface
-- Each user's conversations MUST be isolated from other users
-- Shared Ollama instance, but separate conversation history
-
-**Options**:
-
-**Option A: Phoenix Authentication (phx.gen.auth)**
-- Pro: Built-in Phoenix generator, well-maintained
-- Pro: Email/password with session-based auth
-- Con: Requires database for user storage
-
-**Option B: Basic HTTP Authentication**
-- Pro: Simple, no database required
-- Pro: Can be configured at reverse proxy level
-- Con: Poor user experience
-- Con: No user-specific features
-
-**Option C: OAuth/SSO Integration**
-- Pro: Integrates with existing team identity providers
-- Pro: No password management
-- Con: More complex setup
-- Con: Requires external identity provider
-
-**Open Questions**:
-- Is authentication needed for the team use case, or is network-level access control sufficient?
-- Should there be admin/user role separation?
-
-### System Prompt Configuration (Under Consideration)
-
-**Status**: Not implemented
-
-**Description**: Allow users to configure a system prompt that is prepended to every conversation.
-
-**Requirements**:
-- System prompt MAY be configurable per conversation or globally
-- System prompt MUST be sent as the first message with `role: "system"` in the API request
-- System prompt changes SHOULD take effect on the next message (not retroactively)
-
-### Response Formatting Options (Under Consideration)
+### Response Formatting Options
 
 **Status**: Not implemented
 
 **Description**: Allow users to control Ollama generation parameters.
 
-**Potential Parameters**:
+**Parameters**:
 - Temperature (creativity vs. determinism)
 - Max tokens (response length limit)
 - Top-p / Top-k (sampling strategies)
 - Context window size
 
-### Conversation Export (Under Consideration)
+### Conversation Export
 
 **Status**: Not implemented
 
 **Description**: Export conversations in portable formats.
 
-**Potential Formats**:
+**Formats**:
 - Markdown file (messages as blockquotes or headers)
 - JSON (raw conversation data)
-- PDF (formatted conversation)
 
 ---
 
