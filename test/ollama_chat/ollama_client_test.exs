@@ -116,6 +116,13 @@ defmodule OllamaChat.OllamaClientTest do
     end
   end
 
+  describe "start_command_configured?/0" do
+    test "returns a boolean" do
+      result = OllamaClient.start_command_configured?()
+      assert is_boolean(result)
+    end
+  end
+
   describe "ensure_ollama_running/0" do
     test "returns :ok when Ollama is already running" do
       if OllamaClient.ollama_running?() do

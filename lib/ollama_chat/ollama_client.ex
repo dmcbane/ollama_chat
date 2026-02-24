@@ -35,22 +35,8 @@ defmodule OllamaChat.OllamaClient do
         {:error, "Ollama API returned status #{status}: #{inspect(body)}"}
 
       {:error, error} ->
-        if connection_refused?(error) do
-          Logger.warning("Connection refused, attempting to start Ollama")
-
-          case ensure_ollama_running() do
-            :ok ->
-              # Retry after starting Ollama
-              Process.sleep(2000)
-              chat(messages, opts)
-
-            {:error, reason} ->
-              {:error, "Failed to start Ollama: #{reason}"}
-          end
-        else
-          Logger.error("Chat request failed: #{inspect(error)}")
-          {:error, "HTTP request failed: #{inspect(error)}"}
-        end
+        Logger.error("Chat request failed: #{inspect(error)}")
+        {:error, error}
     end
   end
 
@@ -101,21 +87,8 @@ defmodule OllamaChat.OllamaClient do
         {:error, "Ollama API returned status #{status}: #{inspect(body)}"}
 
       {:error, error} ->
-        if connection_refused?(error) do
-          Logger.warning("Stream connection refused, attempting to start Ollama")
-
-          case ensure_ollama_running() do
-            :ok ->
-              Process.sleep(2000)
-              chat_stream(messages, callback, opts)
-
-            {:error, reason} ->
-              {:error, "Failed to start Ollama: #{reason}"}
-          end
-        else
-          Logger.error("Streaming chat failed: #{inspect(error)}")
-          {:error, "HTTP request failed: #{inspect(error)}"}
-        end
+        Logger.error("Streaming chat failed: #{inspect(error)}")
+        {:error, error}
     end
   end
 
@@ -161,9 +134,18 @@ defmodule OllamaChat.OllamaClient do
     end
   end
 
-  # Private functions
+  @doc """
+  Returns whether an OLLAMA_START_COMMAND is configured.
+  """
+  def start_command_configured? do
+    ollama_start_command() != nil
+  end
 
-  defp start_ollama do
+  @doc """
+  Attempts to start Ollama using the configured start command.
+  Returns :ok on success, {:error, reason} on failure.
+  """
+  def start_ollama do
     case ollama_start_command() do
       nil ->
         Logger.warning("No OLLAMA_START_COMMAND configured, cannot auto-start")
@@ -234,13 +216,6 @@ defmodule OllamaChat.OllamaClient do
     else
       Process.sleep(500)
       wait_for_ollama_ready(max_seconds, elapsed + 0.5)
-    end
-  end
-
-  defp connection_refused?(error) do
-    case error do
-      %{reason: :econnrefused} -> true
-      _ -> false
     end
   end
 end

@@ -31,6 +31,9 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:generation_params, default_generation_params())
       |> assign(:generation_params_open, false)
       |> assign(:stream_timeout_ref, nil)
+      |> assign(:start_command_configured, OllamaClient.start_command_configured?())
+      |> assign(:recovering, false)
+      |> assign(:recovery_step, nil)
       |> stream(:messages, [])
 
     if connected?(socket) do
@@ -266,6 +269,16 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("start_ollama", _params, socket) do
+    if socket.assigns.recovering do
+      {:noreply, socket}
+    else
+      send(self(), {:attempt_recovery, nil})
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_info(:check_ollama_status, socket) do
     status = if OllamaClient.ollama_running?(), do: :running, else: :stopped
 
@@ -388,7 +401,7 @@ defmodule OllamaChatWeb.ChatLive do
 
       {:noreply,
        socket
-       |> assign(:status_message, "Connection to Ollama lost. Attempting to reconnect...")
+       |> assign(:ollama_status, :stopped)
        |> assign(:error, nil)}
     else
       {:noreply,
@@ -399,65 +412,92 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
-  def handle_info({:attempt_recovery, message_id}, socket) do
-    parent = self()
+  def handle_info({:attempt_recovery, _message_id}, socket) do
+    if socket.assigns.recovering do
+      {:noreply, socket}
+    else
+      parent = self()
 
-    spawn(fn ->
-      case OllamaClient.ensure_ollama_running() do
-        :ok ->
-          # Ollama is running or was successfully started
-          Process.sleep(2000)
+      socket =
+        socket
+        |> assign(:recovering, true)
+        |> assign(:recovery_step, :starting)
+        |> assign(:status_message, "Starting Ollama...")
+        |> assign(:error, nil)
 
-          if OllamaClient.ollama_running?() do
-            send(parent, {:recovery_success, message_id})
-          else
-            send(parent, :recovery_failed)
-          end
+      spawn(fn ->
+        case OllamaClient.start_ollama() do
+          :ok ->
+            send(parent, {:recovery_progress, :waiting})
+            Process.sleep(2000)
 
-        {:error, reason} ->
-          send(parent, {:recovery_failed, reason})
-      end
-    end)
+            if OllamaClient.ollama_running?() do
+              send(parent, {:recovery_progress, :loading_models})
+              Process.sleep(500)
+              send(parent, :recovery_complete)
+            else
+              send(parent, {:recovery_failed, "Ollama started but not responding"})
+            end
 
-    {:noreply, socket}
+          {:error, reason} ->
+            send(parent, {:recovery_failed, reason})
+        end
+      end)
+
+      {:noreply, socket}
+    end
   end
 
   @impl true
-  def handle_info({:recovery_success, _message_id}, socket) do
+  def handle_info({:recovery_progress, step}, socket) do
+    status_message =
+      case step do
+        :waiting -> "Waiting for Ollama to initialize..."
+        :loading_models -> "Loading models..."
+        _ -> "Recovering..."
+      end
+
+    {:noreply,
+     socket
+     |> assign(:recovery_step, step)
+     |> assign(:status_message, status_message)}
+  end
+
+  @impl true
+  def handle_info(:recovery_complete, socket) do
     Logger.info("Ollama recovery successful")
 
-    # Clear status message after a delay
-    Process.send_after(self(), :clear_status, 3000)
-
-    # Reload models to update the list and confirm Ollama is ready
+    Process.send_after(self(), :clear_recovery_status, 3000)
     send(self(), :load_models)
 
     {:noreply,
      socket
      |> assign(:ollama_status, :running)
+     |> assign(:recovering, false)
+     |> assign(:recovery_step, :success)
+     |> assign(:status_message, "Ollama is running!")
      |> assign(:error, nil)}
   end
 
   @impl true
   def handle_info({:recovery_failed, reason}, socket) do
-    Logger.error("Ollama recovery failed: #{reason}")
+    Logger.error("Ollama recovery failed: #{inspect(reason)}")
 
     {:noreply,
      socket
      |> assign(:loading, false)
+     |> assign(:recovering, false)
+     |> assign(:recovery_step, nil)
      |> assign(:status_message, nil)
      |> assign(:error, "Failed to start Ollama: #{reason}")}
   end
 
   @impl true
-  def handle_info(:recovery_failed, socket) do
-    Logger.error("Ollama recovery failed: not responding")
-
+  def handle_info(:clear_recovery_status, socket) do
     {:noreply,
      socket
-     |> assign(:loading, false)
-     |> assign(:status_message, nil)
-     |> assign(:error, "Cannot connect to Ollama. Please ensure it is running.")}
+     |> assign(:recovery_step, nil)
+     |> assign(:status_message, nil)}
   end
 
   @impl true
@@ -511,6 +551,15 @@ defmodule OllamaChatWeb.ChatLive do
                   <span class="text-sm text-gray-300">
                     {if @ollama_status == :running, do: "Connected", else: "Disconnected"}
                   </span>
+                  <%= if @ollama_status == :stopped and @start_command_configured and not @recovering do %>
+                    <button
+                      phx-click="start_ollama"
+                      id="start-ollama-btn"
+                      class="ml-1 px-2 py-0.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center gap-1"
+                    >
+                      <.icon name="hero-play" class="w-3 h-3" /> Start
+                    </button>
+                  <% end %>
                 </div>
               </div>
             </div>
@@ -803,11 +852,49 @@ defmodule OllamaChatWeb.ChatLive do
 
         <%!-- Status message display --%>
         <%= if @status_message do %>
-          <div class="mb-4 p-4 bg-blue-900/50 border border-blue-500 rounded-lg text-blue-200">
+          <div class={[
+            "mb-4 p-4 rounded-lg",
+            if(@recovering,
+              do: "bg-amber-900/50 border border-amber-500 text-amber-200",
+              else: "bg-blue-900/50 border border-blue-500 text-blue-200"
+            )
+          ]}>
             <div class="flex items-start gap-2">
-              <.icon name="hero-information-circle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
-              <div>
+              <%= if @recovering do %>
+                <.icon name="hero-arrow-path" class="w-5 h-5 mt-0.5 flex-shrink-0 animate-spin" />
+              <% else %>
+                <.icon name="hero-information-circle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
+              <% end %>
+              <div class="flex-1">
                 <p class="text-sm">{@status_message}</p>
+                <%= if @recovering do %>
+                  <div class="mt-2 flex gap-1" id="recovery-progress">
+                    <div class={[
+                      "h-1.5 flex-1 rounded-full transition-all duration-300",
+                      if(@recovery_step in [:starting, :waiting, :loading_models, :success],
+                        do: "bg-amber-400",
+                        else: "bg-amber-900"
+                      )
+                    ]}>
+                    </div>
+                    <div class={[
+                      "h-1.5 flex-1 rounded-full transition-all duration-300",
+                      if(@recovery_step in [:waiting, :loading_models, :success],
+                        do: "bg-amber-400",
+                        else: "bg-amber-900"
+                      )
+                    ]}>
+                    </div>
+                    <div class={[
+                      "h-1.5 flex-1 rounded-full transition-all duration-300",
+                      if(@recovery_step in [:loading_models, :success],
+                        do: "bg-amber-400",
+                        else: "bg-amber-900"
+                      )
+                    ]}>
+                    </div>
+                  </div>
+                <% end %>
               </div>
             </div>
           </div>
@@ -1231,6 +1318,8 @@ defmodule OllamaChatWeb.ChatLive do
     |> assign(:streaming_message, "")
     |> assign(:error, nil)
     |> assign(:status_message, nil)
+    |> assign(:recovering, false)
+    |> assign(:recovery_step, nil)
     |> assign(:message_history, [])
     |> assign(:current_conversation_id, nil)
     |> assign(:system_prompt, "")

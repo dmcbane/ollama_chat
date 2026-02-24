@@ -171,7 +171,7 @@ defmodule OllamaChatWeb.ChatLiveTest do
       assert html =~ "Test error message" or html =~ "Error"
     end
 
-    test "displays connection error with recovery message", %{conn: conn} do
+    test "displays connection error with recovery attempt", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
       error = %Req.TransportError{reason: :econnrefused}
@@ -179,7 +179,9 @@ defmodule OllamaChatWeb.ChatLiveTest do
       _ = :sys.get_state(view.pid)
 
       html = render(view)
-      assert html =~ "Attempting to reconnect"
+      # Recovery is attempted; without OLLAMA_START_COMMAND it fails fast,
+      # so we see either the recovery status or the failure error
+      assert html =~ "Starting Ollama" or html =~ "Failed to start Ollama"
     end
   end
 
@@ -639,6 +641,61 @@ defmodule OllamaChatWeb.ChatLiveTest do
       # Should still not show Custom badge
       html = render(view)
       refute html =~ "Custom"
+    end
+  end
+
+  describe "start ollama button" do
+    test "start_ollama event does not crash", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "start_ollama", %{})
+
+      # If we get here without error, the event handler works
+      html = render(view)
+      assert html =~ "Ollama Chat"
+    end
+  end
+
+  describe "recovery progress" do
+    test "recovery_progress updates status message", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      send(view.pid, {:recovery_progress, :waiting})
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "Waiting for Ollama to initialize"
+    end
+
+    test "recovery_complete updates status to running", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      send(view.pid, :recovery_complete)
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "Ollama is running"
+    end
+
+    test "recovery_failed shows error message", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      send(view.pid, {:recovery_failed, "command not found"})
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "Failed to start Ollama"
+      assert html =~ "command not found"
+    end
+
+    test "recovery_progress updates recovery step", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      send(view.pid, {:recovery_progress, :loading_models})
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      assert html =~ "Loading models"
     end
   end
 
