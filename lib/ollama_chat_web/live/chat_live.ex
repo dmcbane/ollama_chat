@@ -185,7 +185,7 @@ defmodule OllamaChatWeb.ChatLive do
       Enum.reduce(messages, socket, fn msg, acc ->
         html_content =
           if msg["role"] == "assistant",
-            do: Markdown.render(msg["content"]),
+            do: Markdown.render_to_string(msg["content"]),
             else: nil
 
         message = %{
@@ -336,7 +336,7 @@ defmodule OllamaChatWeb.ChatLive do
       id: message_id,
       role: "assistant",
       content: raw_content,
-      html_content: Markdown.render(raw_content),
+      html_content: Markdown.render_to_string(raw_content),
       timestamp: DateTime.utc_now(),
       streaming: false
     }
@@ -888,7 +888,7 @@ defmodule OllamaChatWeb.ChatLive do
                           <p class="whitespace-pre-wrap break-words">{message.content}</p>
                           <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
                         <% else %>
-                          <div class="prose-chat">{message.html_content}</div>
+                          <div class="prose-chat">{raw(message.html_content)}</div>
                         <% end %>
                       </div>
                     </div>
