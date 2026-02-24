@@ -14,6 +14,7 @@ defmodule OllamaChat.OllamaClient do
   def chat(messages, opts \\ []) do
     model = Keyword.get(opts, :model, default_model())
     stream = Keyword.get(opts, :stream, false)
+    options = Keyword.get(opts, :options, %{})
 
     Logger.info("Sending chat request to model=#{model} with #{length(messages)} messages")
 
@@ -22,6 +23,8 @@ defmodule OllamaChat.OllamaClient do
       messages: messages,
       stream: stream
     }
+
+    body = if options == %{}, do: body, else: Map.put(body, :options, options)
 
     case Req.post(chat_url(), json: body, retry: false) do
       {:ok, %Req.Response{status: 200, body: response_body}} ->
@@ -56,6 +59,7 @@ defmodule OllamaChat.OllamaClient do
   """
   def chat_stream(messages, callback, opts \\ []) do
     model = Keyword.get(opts, :model, default_model())
+    options = Keyword.get(opts, :options, %{})
 
     Logger.info("Starting streaming chat with model=#{model}")
 
@@ -64,6 +68,8 @@ defmodule OllamaChat.OllamaClient do
       messages: messages,
       stream: true
     }
+
+    body = if options == %{}, do: body, else: Map.put(body, :options, options)
 
     case Req.post(chat_url(),
            json: body,

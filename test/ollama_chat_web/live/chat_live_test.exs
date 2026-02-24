@@ -519,6 +519,129 @@ defmodule OllamaChatWeb.ChatLiveTest do
     end
   end
 
+  describe "generation parameters" do
+    test "displays generation parameters toggle button", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+
+      assert html =~ "Generation Parameters"
+    end
+
+    test "generation params panel is closed by default", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+
+      refute html =~ "generation-params-panel"
+    end
+
+    test "toggling opens the generation params panel", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view
+      |> element("#toggle-generation-params")
+      |> render_click()
+
+      assert has_element?(view, "#generation-params-panel")
+      assert has_element?(view, "#generation-params-form")
+    end
+
+    test "shows Custom badge when params differ from defaults", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "update_generation_params", %{"temperature" => "1.5"})
+
+      html = render(view)
+      assert html =~ "Custom"
+    end
+
+    test "no Custom badge when params are at defaults", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+
+      refute html =~ "Custom"
+    end
+
+    test "updating params changes displayed values", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Open the panel
+      view
+      |> element("#toggle-generation-params")
+      |> render_click()
+
+      # Update temperature
+      render_hook(view, "update_generation_params", %{"temperature" => "1.2"})
+
+      html = render(view)
+      assert html =~ "1.2"
+    end
+
+    test "reset restores default values", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Customize params
+      render_hook(view, "update_generation_params", %{"temperature" => "1.5"})
+
+      html = render(view)
+      assert html =~ "Custom"
+
+      # Reset
+      render_hook(view, "reset_generation_params", %{})
+
+      html = render(view)
+      refute html =~ "Custom"
+    end
+
+    test "generation params are restored from loaded conversation", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      conversation = %{
+        "id" => "test-gp-conv",
+        "model" => "llama3",
+        "system_prompt" => "",
+        "generation_params" => %{
+          "temperature" => 1.5,
+          "num_predict" => 4096,
+          "top_p" => 0.9,
+          "top_k" => 40,
+          "num_ctx" => 4096
+        },
+        "messages" => [
+          %{"role" => "user", "content" => "Hello", "timestamp" => "2024-01-01T00:00:00Z"}
+        ]
+      }
+
+      render_hook(view, "conversation_loaded", %{"conversation" => conversation})
+
+      html = render(view)
+      # Should show Custom badge since temperature differs
+      assert html =~ "Custom"
+    end
+
+    test "generation params are reset on new conversation", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Customize params
+      render_hook(view, "update_generation_params", %{"temperature" => "1.5"})
+
+      # Clear chat (starts new conversation)
+      view
+      |> element("button[phx-click='clear_chat']")
+      |> render_click()
+
+      html = render(view)
+      refute html =~ "Custom"
+    end
+
+    test "ignores unknown param keys", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # This should not crash
+      render_hook(view, "update_generation_params", %{"unknown_param" => "999"})
+
+      # Should still not show Custom badge
+      html = render(view)
+      refute html =~ "Custom"
+    end
+  end
+
   describe "streaming timeout" do
     test "timeout clears loading and shows an error", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")

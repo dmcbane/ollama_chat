@@ -89,7 +89,6 @@ OllamaChat.Supervisor (:one_for_one)
 - No server-side database or file-based storage required
 
 **Current Limitations**:
-- No conversation export/import
 - localStorage is browser-specific (conversations don't sync across browsers/devices)
 - Storage is capped at 100 conversations with automatic eviction of oldest
 
@@ -720,31 +719,37 @@ This section documents features that have been completed beyond the original MVP
 - On timeout: streaming message is removed, error is displayed, loading state is cleared
 - Guarded against stale timeouts (checks `loading` assign before acting)
 
----
+### Conversation Export
 
-## Planned Enhancements
+**Status**: Implemented
+
+**Implementation**: Export button in the header (download icon) with a dropdown offering Markdown and JSON formats. Uses the `ConversationManager` colocated JS hook for file generation and download.
+
+- Export button enabled only when a conversation is loaded
+- Dropdown with two options: "Export as Markdown" and "Export as JSON"
+- Markdown format includes title, model, date, system prompt, and messages with role headers
+- JSON format exports the full conversation object with pretty-printing
+- Files are downloaded with sanitized filenames derived from the conversation title
+- LiveView pushes `export_conversation` event to the JS hook which handles formatting and download
 
 ### Response Formatting Options
 
-**Status**: Not implemented
+**Status**: Implemented
 
-**Description**: Allow users to control Ollama generation parameters.
+**Implementation**: Collapsible panel below the system prompt section with range sliders for Ollama generation parameters. Parameters are stored as assigns, forwarded to `OllamaClient.chat_stream/3` via the `options` map, and persisted alongside conversation data in localStorage.
 
-**Parameters**:
-- Temperature (creativity vs. determinism)
-- Max tokens (response length limit)
-- Top-p / Top-k (sampling strategies)
-- Context window size
-
-### Conversation Export
-
-**Status**: Not implemented
-
-**Description**: Export conversations in portable formats.
-
-**Formats**:
-- Markdown file (messages as blockquotes or headers)
-- JSON (raw conversation data)
+- Per-conversation generation parameters, configurable via collapsible UI panel
+- "Custom" badge shown when parameters differ from defaults
+- Five configurable parameters:
+  - **Temperature** (0.0–2.0, step 0.1, default 0.8) — controls response creativity
+  - **Max Tokens** (64–8192, step 64, default 2048) — maps to Ollama's `num_predict`
+  - **Top P** (0.0–1.0, step 0.05, default 0.9) — nucleus sampling threshold
+  - **Top K** (1–100, step 1, default 40) — top-k sampling limit
+  - **Context Window** (512–131072, step 512, default 4096) — maps to Ollama's `num_ctx`
+- Each slider displays its current value next to the label
+- "Reset to Defaults" button restores all parameters
+- Parameters persisted in localStorage alongside conversation data
+- Reset on new conversation, restored on conversation load
 
 ---
 

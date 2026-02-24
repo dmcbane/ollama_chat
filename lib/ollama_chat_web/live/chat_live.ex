@@ -28,6 +28,8 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:storage_warning, false)
       |> assign(:system_prompt, "")
       |> assign(:system_prompt_open, false)
+      |> assign(:generation_params, default_generation_params())
+      |> assign(:generation_params_open, false)
       |> assign(:stream_timeout_ref, nil)
       |> stream(:messages, [])
 
@@ -107,6 +109,7 @@ defmodule OllamaChatWeb.ChatLive do
       # Start streaming in a separate process
       parent = self()
       model = socket.assigns.selected_model
+      ollama_options = build_ollama_options(socket.assigns.generation_params)
 
       spawn(fn ->
         result =
@@ -121,7 +124,8 @@ defmodule OllamaChatWeb.ChatLive do
                 send(parent, {:stream_done, assistant_message_id})
               end
             end,
-            model: model
+            model: model,
+            options: ollama_options
           )
 
         case result do
@@ -171,6 +175,10 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:message_history, messages)
       |> assign(:messages_empty?, messages == [])
       |> assign(:system_prompt, conversation["system_prompt"] || "")
+      |> assign(
+        :generation_params,
+        restore_generation_params(conversation["generation_params"])
+      )
 
     # Stream all messages, rendering markdown for assistant messages
     socket =
@@ -229,6 +237,32 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_event("update_system_prompt", %{"system_prompt" => prompt}, socket) do
     {:noreply, assign(socket, :system_prompt, prompt)}
+  end
+
+  @impl true
+  def handle_event("toggle_generation_params", _params, socket) do
+    {:noreply, assign(socket, :generation_params_open, !socket.assigns.generation_params_open)}
+  end
+
+  @impl true
+  def handle_event("update_generation_params", params, socket) do
+    current = socket.assigns.generation_params
+
+    updated =
+      Enum.reduce(params, current, fn {key, value}, acc ->
+        if Map.has_key?(acc, key) do
+          Map.put(acc, key, parse_number(value))
+        else
+          acc
+        end
+      end)
+
+    {:noreply, assign(socket, :generation_params, updated)}
+  end
+
+  @impl true
+  def handle_event("reset_generation_params", _params, socket) do
+    {:noreply, assign(socket, :generation_params, default_generation_params())}
   end
 
   @impl true
@@ -323,7 +357,8 @@ defmodule OllamaChatWeb.ChatLive do
       messages: Enum.reverse(updated_history),
       model: socket.assigns.selected_model,
       conversation_id: socket.assigns.current_conversation_id,
-      system_prompt: socket.assigns.system_prompt
+      system_prompt: socket.assigns.system_prompt,
+      generation_params: socket.assigns.generation_params
     }
 
     socket = push_event(socket, "save_conversation", conversation_data)
@@ -622,6 +657,150 @@ defmodule OllamaChatWeb.ChatLive do
           <% end %>
         </div>
 
+        <%!-- Generation parameters panel --%>
+        <div class="mb-4">
+          <button
+            type="button"
+            phx-click="toggle_generation_params"
+            class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
+            id="toggle-generation-params"
+          >
+            <.icon
+              name={if @generation_params_open, do: "hero-chevron-down", else: "hero-chevron-right"}
+              class="w-4 h-4"
+            />
+            <span>Generation Parameters</span>
+            <%= if generation_params_customized?(@generation_params) do %>
+              <span class="px-2 py-0.5 text-xs bg-amber-600 text-white rounded-full">Custom</span>
+            <% end %>
+          </button>
+          <%= if @generation_params_open do %>
+            <div
+              class="mt-2 bg-slate-800/50 border border-slate-700 rounded-lg p-4"
+              id="generation-params-panel"
+            >
+              <.form
+                for={to_form(@generation_params)}
+                id="generation-params-form"
+                phx-change="update_generation_params"
+              >
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <%!-- Temperature --%>
+                  <div>
+                    <label class="text-sm text-gray-300 flex justify-between mb-1">
+                      <span>Temperature</span>
+                      <span class="text-blue-400 font-mono">{@generation_params["temperature"]}</span>
+                    </label>
+                    <input
+                      type="range"
+                      name="temperature"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={@generation_params["temperature"]}
+                      class="w-full accent-blue-500"
+                    />
+                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                      <span>Precise</span>
+                      <span>Creative</span>
+                    </div>
+                  </div>
+                  <%!-- Max Tokens (num_predict) --%>
+                  <div>
+                    <label class="text-sm text-gray-300 flex justify-between mb-1">
+                      <span>Max Tokens</span>
+                      <span class="text-blue-400 font-mono">{@generation_params["num_predict"]}</span>
+                    </label>
+                    <input
+                      type="range"
+                      name="num_predict"
+                      min="64"
+                      max="8192"
+                      step="64"
+                      value={@generation_params["num_predict"]}
+                      class="w-full accent-blue-500"
+                    />
+                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                      <span>64</span>
+                      <span>8192</span>
+                    </div>
+                  </div>
+                  <%!-- Top P --%>
+                  <div>
+                    <label class="text-sm text-gray-300 flex justify-between mb-1">
+                      <span>Top P</span>
+                      <span class="text-blue-400 font-mono">{@generation_params["top_p"]}</span>
+                    </label>
+                    <input
+                      type="range"
+                      name="top_p"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={@generation_params["top_p"]}
+                      class="w-full accent-blue-500"
+                    />
+                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                      <span>Focused</span>
+                      <span>Diverse</span>
+                    </div>
+                  </div>
+                  <%!-- Top K --%>
+                  <div>
+                    <label class="text-sm text-gray-300 flex justify-between mb-1">
+                      <span>Top K</span>
+                      <span class="text-blue-400 font-mono">{@generation_params["top_k"]}</span>
+                    </label>
+                    <input
+                      type="range"
+                      name="top_k"
+                      min="1"
+                      max="100"
+                      step="1"
+                      value={@generation_params["top_k"]}
+                      class="w-full accent-blue-500"
+                    />
+                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                      <span>1</span>
+                      <span>100</span>
+                    </div>
+                  </div>
+                  <%!-- Context Window (num_ctx) --%>
+                  <div class="md:col-span-2">
+                    <label class="text-sm text-gray-300 flex justify-between mb-1">
+                      <span>Context Window</span>
+                      <span class="text-blue-400 font-mono">{@generation_params["num_ctx"]}</span>
+                    </label>
+                    <input
+                      type="range"
+                      name="num_ctx"
+                      min="512"
+                      max="131072"
+                      step="512"
+                      value={@generation_params["num_ctx"]}
+                      class="w-full accent-blue-500"
+                    />
+                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                      <span>512</span>
+                      <span>131072</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    phx-click="reset_generation_params"
+                    class="text-sm text-gray-400 hover:text-white transition-colors px-3 py-1 rounded border border-slate-600 hover:border-slate-500"
+                    id="reset-generation-params"
+                  >
+                    Reset to Defaults
+                  </button>
+                </div>
+              </.form>
+            </div>
+          <% end %>
+        </div>
+
         <%!-- Status message display --%>
         <%= if @status_message do %>
           <div class="mb-4 p-4 bg-blue-900/50 border border-blue-500 rounded-lg text-blue-200">
@@ -906,7 +1085,7 @@ defmodule OllamaChatWeb.ChatLive do
         },
 
         saveConversation(data) {
-          const { messages, model, conversation_id, system_prompt } = data;
+          const { messages, model, conversation_id, system_prompt, generation_params } = data;
 
           if (!messages || messages.length === 0) return;
 
@@ -931,6 +1110,7 @@ defmodule OllamaChatWeb.ChatLive do
             model: model,
             messages: messages,
             system_prompt: system_prompt || "",
+            generation_params: generation_params || null,
             created_at: existingIndex >= 0 ? conversations[existingIndex].created_at : now,
             updated_at: now
           };
@@ -1055,6 +1235,8 @@ defmodule OllamaChatWeb.ChatLive do
     |> assign(:current_conversation_id, nil)
     |> assign(:system_prompt, "")
     |> assign(:system_prompt_open, false)
+    |> assign(:generation_params, default_generation_params())
+    |> assign(:generation_params_open, false)
     |> push_event("new_conversation", %{})
   end
 
@@ -1072,6 +1254,47 @@ defmodule OllamaChatWeb.ChatLive do
       true ->
         false
     end
+  end
+
+  defp default_generation_params do
+    %{
+      "temperature" => 0.8,
+      "num_predict" => 2048,
+      "top_p" => 0.9,
+      "top_k" => 40,
+      "num_ctx" => 4096
+    }
+  end
+
+  defp build_ollama_options(params) do
+    defaults = default_generation_params()
+
+    params
+    |> Enum.reject(fn {key, value} -> Map.get(defaults, key) == value end)
+    |> Enum.into(%{}, fn {key, value} -> {String.to_existing_atom(key), value} end)
+  end
+
+  defp restore_generation_params(nil), do: default_generation_params()
+
+  defp restore_generation_params(params) when is_map(params) do
+    defaults = default_generation_params()
+    Map.merge(defaults, Map.take(params, Map.keys(defaults)))
+  end
+
+  defp parse_number(value) when is_binary(value) do
+    case Float.parse(value) do
+      {float, ""} ->
+        if float == trunc(float), do: trunc(float), else: float
+
+      _ ->
+        value
+    end
+  end
+
+  defp parse_number(value), do: value
+
+  defp generation_params_customized?(params) do
+    params != default_generation_params()
   end
 
   defp format_error(reason) when is_binary(reason), do: reason
