@@ -785,6 +785,48 @@ This section documents features that have been completed beyond the original MVP
 
 ---
 
+### Prompt Cancellation
+
+**Status**: Planned
+
+**Description**: Allow users to cancel an in-progress LLM response stream by clicking a cancel button that replaces the send button while streaming is active.
+
+**Use Case**: Long-running or irrelevant responses can waste time and resources. Users should be able to stop the generation at any point and either refine their prompt or start a new conversation without waiting for completion.
+
+**Implementation Approach**:
+- Replace the send button with a cancel/stop button when `@loading` is true
+- Use a distinctive visual indicator (e.g., stop icon, different color like red/orange)
+- On cancel click:
+  - Terminate the streaming process spawned in `handle_event("send_message")`
+  - Send a message to kill the streaming process
+  - Mark the partial assistant message as "cancelled" or remove it
+  - Reset `@loading` state to false
+  - Clear `@streaming_message` accumulator
+  - Cancel any active stream timeout references
+- Consider adding a visual indicator on cancelled messages (e.g., "Response cancelled" note)
+
+**UI Changes**:
+- Send button → Cancel button transformation while streaming
+- Cancel button styling: red/orange background with stop icon
+- Tooltip: "Cancel response" or "Stop generation"
+- Smooth transition between send/cancel states
+
+**Technical Considerations**:
+- Store the streaming process PID in socket assigns when spawning
+- Use `Process.exit(pid, :kill)` or send a stop message to the streaming process
+- Ensure proper cleanup of stream timeout references
+- Handle edge cases where stream completes just as cancel is clicked
+- Consider whether to keep or discard partial responses
+
+**Benefits**:
+- Better user control over conversation flow
+- Saves compute resources on unwanted responses
+- Improves UX when prompts need refinement
+- Reduces frustration with slow or off-topic responses
+- Visual feedback that system is busy (dual purpose button)
+
+---
+
 ## Routing
 
 ### Route Structure
