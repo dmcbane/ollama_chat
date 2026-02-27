@@ -753,6 +753,38 @@ This section documents features that have been completed beyond the original MVP
 
 ---
 
+## Future Features
+
+### Paste-to-Markdown Conversion
+
+**Status**: Planned
+
+**Description**: Automatically convert rich text content pasted into the chat input field to Markdown format.
+
+**Use Case**: When users paste formatted content from web pages, documents, or other applications (e.g., HTML, rich text), the application should intelligently convert it to clean Markdown syntax before sending to the LLM. This improves the quality of prompts and makes pasted content more readable.
+
+**Implementation Approach**:
+- Intercept paste events in the chat textarea using JavaScript hooks
+- Detect if pasted content contains HTML or rich formatting
+- Convert HTML to Markdown using a JavaScript library (similar to [Turndown](https://github.com/mixmark-io/turndown))
+- Replace the paste event content with the converted Markdown
+- Preserve plain text pastes as-is without conversion
+
+**Example Conversions**:
+- `<strong>bold text</strong>` → `**bold text**`
+- `<em>italic text</em>` → `*italic text*`
+- `<a href="url">link</a>` → `[link](url)`
+- `<ul><li>item</li></ul>` → `- item`
+- Code blocks, headings, tables, etc.
+
+**Benefits**:
+- Cleaner prompt formatting for LLMs
+- Better preservation of document structure
+- Improved user experience when copying from external sources
+- More readable conversation history
+
+---
+
 ## Routing
 
 ### Route Structure

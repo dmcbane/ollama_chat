@@ -49,6 +49,8 @@ custom classes must fully style the input
 <!-- phoenix:elixir-start -->
 ## Elixir guidelines
 
+- **NEVER SWALLOW ERRORS** — Always handle errors explicitly and provide meaningful error messages. Never use catch-all patterns that hide failures or use `_ ->` without proper error handling. Let it crash when appropriate, or handle errors with clear logging and user feedback
+
 - Elixir lists **do not support index based access via the access syntax**
 
   **Never do this (invalid)**:

@@ -69,8 +69,11 @@ defmodule OllamaChat.OllamaClient do
                  {:ok, chunk} ->
                    callback.(chunk)
 
-                 {:error, _} ->
-                   Logger.debug("Skipping invalid JSON chunk in stream")
+                 {:error, reason} ->
+                   Logger.warning(
+                     "Skipping invalid JSON chunk in stream: #{inspect(reason)}, line: #{inspect(line)}"
+                   )
+
                    :ok
                end
              end)
@@ -97,8 +100,16 @@ defmodule OllamaChat.OllamaClient do
   """
   def ollama_running? do
     case Req.get(tags_url(), retry: false, receive_timeout: 2000) do
-      {:ok, %Req.Response{status: 200}} -> true
-      _ -> false
+      {:ok, %Req.Response{status: 200}} ->
+        true
+
+      {:ok, %Req.Response{status: status}} ->
+        Logger.debug("Ollama health check returned status #{status}")
+        false
+
+      {:error, error} ->
+        Logger.debug("Ollama health check failed: #{inspect(error)}")
+        false
     end
   end
 
@@ -209,7 +220,8 @@ defmodule OllamaChat.OllamaClient do
         {:ok, _models} ->
           :ok
 
-        _error ->
+        {:error, reason} ->
+          Logger.debug("Waiting for Ollama models to be available: #{inspect(reason)}")
           Process.sleep(500)
           wait_for_ollama_ready(max_seconds, elapsed + 0.5)
       end

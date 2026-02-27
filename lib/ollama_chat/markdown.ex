@@ -4,6 +4,8 @@ defmodule OllamaChat.Markdown do
   Used for formatting assistant messages with GFM support and syntax highlighting.
   """
 
+  require Logger
+
   @doc """
   Renders a markdown string to an HTML string (not wrapped in {:safe, ...}).
   Use this when storing HTML that needs to be JSON-serializable.
@@ -19,7 +21,8 @@ defmodule OllamaChat.Markdown do
       {:ok, html} ->
         html
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        Logger.warning("MDEx failed to render markdown: #{inspect(reason)}")
         escaped = markdown |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
         "<pre>" <> escaped <> "</pre>"
     end
@@ -42,7 +45,8 @@ defmodule OllamaChat.Markdown do
       {:ok, html} ->
         {:safe, html}
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        Logger.warning("MDEx failed to render markdown: #{inspect(reason)}")
         escaped = markdown |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
         {:safe, "<pre>" <> escaped <> "</pre>"}
     end

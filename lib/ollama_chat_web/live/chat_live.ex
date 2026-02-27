@@ -296,9 +296,11 @@ defmodule OllamaChatWeb.ChatLive do
          |> assign(:ollama_status, :running)}
 
       {:ok, []} ->
+        Logger.warning("Ollama returned empty model list")
         {:noreply, assign(socket, :available_models, [])}
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        Logger.error("Failed to load models: #{inspect(reason)}")
         {:noreply, assign(socket, :available_models, [])}
     end
   end
@@ -1162,6 +1164,10 @@ defmodule OllamaChatWeb.ChatLive do
             return parsed.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
           } catch (e) {
             console.error("Error loading conversations:", e);
+            // Notify user of localStorage corruption
+            this.pushEvent("storage_error", {
+              message: "Failed to load conversation history. Data may be corrupted."
+            });
             return [];
           }
         },
@@ -1229,10 +1235,11 @@ defmodule OllamaChatWeb.ChatLive do
             this.loadConversations();
           } catch (e) {
             console.error("Error saving conversation:", e);
-            // Check if quota exceeded
-            if (e.name === "QuotaExceededError") {
-              this.pushEvent("storage_error", { message: "Storage quota exceeded" });
-            }
+            // Notify user of storage errors
+            const errorMessage = e.name === "QuotaExceededError"
+              ? "Storage quota exceeded. Consider exporting and deleting old conversations."
+              : `Failed to save conversation: ${e.message || "Unknown error"}`;
+            this.pushEvent("storage_error", { message: errorMessage });
           }
         },
 
