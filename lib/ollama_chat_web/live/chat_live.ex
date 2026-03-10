@@ -1657,9 +1657,13 @@ defmodule OllamaChatWeb.ChatLive do
   defp build_ollama_options(params) do
     defaults = default_generation_params()
 
+    # Whitelist of allowed parameter keys that can be converted to atoms
+    allowed_keys = ~w(temperature num_predict top_p top_k num_ctx)
+
     params
     |> Enum.reject(fn {key, value} -> Map.get(defaults, key) == value end)
-    |> Enum.into(%{}, fn {key, value} -> {String.to_existing_atom(key), value} end)
+    |> Enum.filter(fn {key, _value} -> key in allowed_keys end)
+    |> Enum.into(%{}, fn {key, value} -> {String.to_atom(key), value} end)
   end
 
   defp restore_generation_params(nil), do: default_generation_params()
