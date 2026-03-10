@@ -1,7 +1,7 @@
 defmodule OllamaChatWeb.ChatLive do
   use OllamaChatWeb, :live_view
 
-  alias OllamaChat.{Markdown, OllamaClient}
+  alias OllamaChat.{Markdown, OllamaClient, MCPClient, MCPPromptBuilder, MCPResponseParser}
 
   require Logger
 
@@ -34,7 +34,26 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:start_command_configured, OllamaClient.start_command_configured?())
       |> assign(:recovering, false)
       |> assign(:recovery_step, nil)
+      |> assign(:mcp_enabled?, MCPClient.enabled?())
+      |> assign(:mcp_tools, %{})
+      |> assign(:pending_approval, nil)
+      |> assign(:show_mcp_settings, false)
       |> stream(:messages, [])
+
+    socket =
+      if connected?(socket) and socket.assigns.mcp_enabled? do
+        case MCPClient.list_tools() do
+          {:ok, tools} ->
+            Logger.info("Loaded #{map_size(tools)} MCP tools")
+            assign(socket, :mcp_tools, tools)
+
+          {:error, reason} ->
+            Logger.warning("Failed to load MCP tools: #{inspect(reason)}")
+            socket
+        end
+      else
+        socket
+      end
 
     if connected?(socket) do
       send(self(), :check_ollama_status)
@@ -89,10 +108,24 @@ defmodule OllamaChatWeb.ChatLive do
           %{role: msg.role, content: msg.content}
         end)
 
-      # Prepend system prompt if set
+      # Build system prompt (MCP-aware if tools available)
+      system_prompt =
+        if socket.assigns.mcp_enabled? and map_size(socket.assigns.mcp_tools) > 0 do
+          MCPPromptBuilder.build_tool_aware_system_prompt(
+            socket.assigns.mcp_tools,
+            socket.assigns.system_prompt
+          )
+        else
+          if socket.assigns.system_prompt != "" do
+            socket.assigns.system_prompt
+          else
+            nil
+          end
+        end
+
       messages_for_api =
-        if socket.assigns.system_prompt != "" do
-          [%{role: "system", content: socket.assigns.system_prompt} | messages_for_api]
+        if system_prompt do
+          [%{role: "system", content: system_prompt} | messages_for_api]
         else
           messages_for_api
         end
@@ -310,6 +343,28 @@ defmodule OllamaChatWeb.ChatLive do
     current = socket.assigns.streaming_message
     new_content = current <> content
 
+    # Check for tool calls if MCP is enabled
+    if socket.assigns.mcp_enabled? and MCPResponseParser.contains_tool_call?(new_content) do
+      case MCPResponseParser.parse_response(new_content) do
+        {:tool_call, tool_name, args} ->
+          # Tool call detected - stop streaming and handle it
+          cancel_stream_timeout(socket.assigns.stream_timeout_ref)
+          Logger.info("Tool call detected: #{tool_name} with args: #{inspect(args)}")
+
+          socket = handle_tool_call(socket, message_id, tool_name, args)
+          {:noreply, socket}
+
+        :no_tool_call ->
+          # Contains "tool_call" text but not a valid tool call yet, continue streaming
+          stream_normal_chunk(socket, message_id, new_content)
+      end
+    else
+      # Normal streaming without tool calls
+      stream_normal_chunk(socket, message_id, new_content)
+    end
+  end
+
+  defp stream_normal_chunk(socket, message_id, new_content) do
     # Update the streaming message
     updated_message = %{
       id: message_id,
@@ -492,6 +547,90 @@ defmodule OllamaChatWeb.ChatLive do
      |> assign(:recovery_step, nil)
      |> assign(:status_message, nil)
      |> assign(:error, "Failed to start Ollama: #{reason}")}
+  end
+
+  # MCP Tool Call Handlers
+
+  @impl true
+  def handle_info({:tool_result, message_id, tool_name, result}, socket) do
+    Logger.info("Tool #{tool_name} completed successfully")
+
+    # Add tool result message
+    tool_result_message = %{
+      id: "#{message_id}-tool-result",
+      role: "tool_result",
+      content: format_tool_result(result),
+      tool_name: tool_name,
+      timestamp: DateTime.utc_now()
+    }
+
+    socket = stream_insert(socket, :messages, tool_result_message)
+
+    # Continue LLM conversation with tool result
+    socket = continue_with_tool_result(socket, message_id, tool_name, result)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:tool_error, message_id, tool_name, reason}, socket) do
+    Logger.error("Tool #{tool_name} execution failed: #{inspect(reason)}")
+
+    error_message = %{
+      id: "#{message_id}-tool-error",
+      role: "tool_error",
+      content: "Tool execution failed: #{format_error(reason)}",
+      tool_name: tool_name,
+      timestamp: DateTime.utc_now()
+    }
+
+    socket =
+      socket
+      |> stream_insert(:messages, error_message)
+      |> assign(:loading, false)
+      |> assign(:error, "Tool execution failed: #{tool_name}")
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("approve_tool", _params, socket) do
+    case socket.assigns.pending_approval do
+      nil ->
+        {:noreply, socket}
+
+      approval ->
+        Logger.info("User approved tool: #{approval.tool_name}")
+
+        socket =
+          socket
+          |> assign(:pending_approval, nil)
+          |> execute_mcp_tool(
+            approval.message_id,
+            approval.tool_name,
+            approval.args
+          )
+
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_tool_approval", _params, socket) do
+    Logger.info("User cancelled tool execution")
+
+    socket =
+      socket
+      |> assign(:pending_approval, nil)
+      |> assign(:error, "Tool execution cancelled by user")
+      |> assign(:loading, false)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_mcp_settings", _params, socket) do
+    {:noreply, assign(socket, :show_mcp_settings, !socket.assigns.show_mcp_settings)}
   end
 
   @impl true
@@ -1392,6 +1531,187 @@ defmodule OllamaChatWeb.ChatLive do
   defp generation_params_customized?(params) do
     params != default_generation_params()
   end
+
+  # MCP Tool Handling Functions
+
+  defp handle_tool_call(socket, message_id, tool_name, args) do
+    tool_info = Map.get(socket.assigns.mcp_tools, tool_name)
+
+    if tool_info do
+      # Validate arguments
+      case MCPResponseParser.validate_arguments(args, tool_info.schema) do
+        :ok ->
+          if tool_info.requires_approval do
+            # Request user approval
+            Logger.info("Tool #{tool_name} requires approval")
+
+            socket
+            |> assign(:pending_approval, %{
+              message_id: message_id,
+              tool_name: tool_name,
+              tool_info: tool_info,
+              args: args
+            })
+            |> assign(:loading, false)
+          else
+            # Execute immediately
+            execute_mcp_tool(socket, message_id, tool_name, args)
+          end
+
+        {:error, validation_error} ->
+          Logger.warning("Tool argument validation failed: #{validation_error}")
+
+          socket
+          |> assign(:error, "Invalid tool arguments: #{validation_error}")
+          |> assign(:loading, false)
+      end
+    else
+      Logger.warning("Unknown tool requested: #{tool_name}")
+
+      socket
+      |> assign(:error, "Unknown tool: #{tool_name}")
+      |> assign(:loading, false)
+    end
+  end
+
+  defp execute_mcp_tool(socket, message_id, tool_name, args) do
+    # Add tool call indicator message
+    tool_call_message = %{
+      id: "#{message_id}-tool-call",
+      role: "tool_call",
+      content: "Calling tool: #{tool_name}",
+      tool_name: tool_name,
+      args: args,
+      timestamp: DateTime.utc_now()
+    }
+
+    socket = stream_insert(socket, :messages, tool_call_message)
+
+    # Execute tool in background
+    parent = self()
+
+    spawn(fn ->
+      case MCPClient.call_tool(tool_name, args) do
+        {:ok, result} ->
+          send(parent, {:tool_result, message_id, tool_name, result})
+
+        {:error, reason} ->
+          send(parent, {:tool_error, message_id, tool_name, reason})
+      end
+    end)
+
+    assign(socket, :loading, true)
+  end
+
+  defp continue_with_tool_result(socket, _message_id, tool_name, result) do
+    # Build tool result message for LLM context
+    tool_result_text = MCPPromptBuilder.build_tool_result_message(tool_name, result)
+
+    # Add tool result to conversation history
+    tool_result_msg = %{
+      role: "system",
+      content: tool_result_text
+    }
+
+    # Build messages for API including tool result
+    messages_for_api =
+      [
+        tool_result_msg
+        | [%{role: "user", content: "Continue your response."} | socket.assigns.message_history]
+      ]
+      |> Enum.reverse()
+      |> Enum.map(fn msg ->
+        %{role: msg[:role] || msg["role"], content: msg[:content] || msg["content"]}
+      end)
+
+    # Add system prompt with tools
+    system_prompt =
+      if socket.assigns.mcp_enabled? and map_size(socket.assigns.mcp_tools) > 0 do
+        MCPPromptBuilder.build_tool_aware_system_prompt(
+          socket.assigns.mcp_tools,
+          socket.assigns.system_prompt
+        )
+      else
+        socket.assigns.system_prompt
+      end
+
+    messages_for_api =
+      if system_prompt && system_prompt != "" do
+        [%{role: "system", content: system_prompt} | messages_for_api]
+      else
+        messages_for_api
+      end
+
+    # Create new assistant message for continuation
+    continuation_message_id = generate_id()
+
+    continuation_message = %{
+      id: continuation_message_id,
+      role: "assistant",
+      content: "",
+      html_content: nil,
+      timestamp: DateTime.utc_now(),
+      streaming: true
+    }
+
+    socket = stream_insert(socket, :messages, continuation_message)
+
+    # Start streaming continuation
+    parent = self()
+    model = socket.assigns.selected_model
+    ollama_options = build_ollama_options(socket.assigns.generation_params)
+
+    spawn(fn ->
+      result =
+        OllamaClient.chat_stream(
+          messages_for_api,
+          fn chunk ->
+            if chunk["message"] && chunk["message"]["content"] do
+              send(parent, {:stream_chunk, continuation_message_id, chunk["message"]["content"]})
+            end
+
+            if chunk["done"] do
+              send(parent, {:stream_done, continuation_message_id})
+            end
+          end,
+          model: model,
+          options: ollama_options
+        )
+
+      case result do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          send(parent, {:stream_error, continuation_message_id, reason})
+      end
+    end)
+
+    # Reset streaming state
+    socket
+    |> assign(:streaming_message, "")
+    |> assign(:loading, true)
+  end
+
+  defp format_tool_result(result) when is_list(result) do
+    result
+    |> Enum.map(fn
+      %{"type" => "text", "text" => text} ->
+        text
+
+      %{"type" => "image", "mimeType" => mime_type} ->
+        "[Image: #{mime_type}]"
+
+      %{"type" => "resource", "uri" => uri} ->
+        "[Resource: #{uri}]"
+
+      other ->
+        inspect(other)
+    end)
+    |> Enum.join("\n\n")
+  end
+
+  defp format_tool_result(result), do: inspect(result)
 
   defp format_error(reason) when is_binary(reason), do: reason
 
