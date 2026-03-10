@@ -12,6 +12,11 @@ A beautiful, real-time web-based chat interface for interacting with local Ollam
 - 📱 Responsive design for desktop and mobile
 - ⚡ Built with Phoenix LiveView for real-time updates
 - 🎯 Designed for local use - just start and chat
+- 🔧 **MCP (Model Context Protocol)** - AI can use external tools
+  - 📁 File system operations (read, write, search files)
+  - 🔌 Extensible tool system with approval workflows
+  - 🛡️ Secure sandboxed workspace for file access
+  - See [MCP_USER_GUIDE.md](MCP_USER_GUIDE.md) for usage instructions
 
 ## Prerequisites
 
