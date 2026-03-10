@@ -193,29 +193,20 @@ defmodule OllamaChat.MCPClient do
     clients
     |> Enum.flat_map(fn {server_name, client_info} ->
       case Client.list_tools(client_info.pid) do
-        {:ok, %{"tools" => tools}} when is_list(tools) ->
+        {:ok, %ExMCP.Response{tools: tools}} when is_list(tools) ->
           tools
           |> Enum.map(fn tool ->
-            {tool["name"],
-             %{
-               server: server_name,
-               name: tool["name"],
-               description: tool["description"] || "",
-               schema: tool["inputSchema"] || %{},
-               requires_approval: requires_approval?(client_info.config, tool["name"])
-             }}
-          end)
+            tool_name = tool[:name] || tool["name"]
+            tool_desc = tool[:description] || tool["description"] || ""
+            tool_schema = tool[:inputSchema] || tool["inputSchema"] || %{}
 
-        {:ok, tools} when is_map(tools) ->
-          tools
-          |> Enum.map(fn tool ->
-            {tool["name"],
+            {tool_name,
              %{
                server: server_name,
-               name: tool["name"],
-               description: tool["description"] || "",
-               schema: tool["inputSchema"] || %{},
-               requires_approval: requires_approval?(client_info.config, tool["name"])
+               name: tool_name,
+               description: tool_desc,
+               schema: tool_schema,
+               requires_approval: requires_approval?(client_info.config, tool_name)
              }}
           end)
 
