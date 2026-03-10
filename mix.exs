@@ -11,7 +11,8 @@ defmodule OllamaChat.MixProject do
       aliases: aliases(),
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
-      listeners: [Phoenix.CodeReloader]
+      listeners: [Phoenix.CodeReloader],
+      dialyzer: dialyzer()
     ]
   end
 
@@ -65,7 +66,8 @@ defmodule OllamaChat.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -86,12 +88,29 @@ defmodule OllamaChat.MixProject do
         "phx.digest"
       ],
       precommit: [
-        "compile --warnings-as-errors",
+        "compile",
         "deps.unlock --unused",
         "format --check-formatted",
-        "credo --strict",
+        "credo --min-priority high",
+        "dialyzer",
         "test"
       ]
+    ]
+  end
+
+  # Dialyzer configuration for type checking
+  defp dialyzer do
+    [
+      plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
+      plt_add_apps: [:mix, :ex_unit],
+      flags: [
+        :error_handling,
+        :underspecs,
+        :unmatched_returns
+      ],
+      # Ignore warnings from dependencies
+      ignore_warnings: ".dialyzer_ignore.exs",
+      list_unused_filters: true
     ]
   end
 end

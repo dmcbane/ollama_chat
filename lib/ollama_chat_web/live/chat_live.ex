@@ -148,29 +148,17 @@ defmodule OllamaChatWeb.ChatLive do
       ollama_options = build_ollama_options(socket.assigns.generation_params)
 
       spawn(fn ->
+        stream_callback = build_stream_callback(parent, assistant_message_id)
+
         result =
           OllamaClient.chat_stream(
             messages_for_api,
-            fn chunk ->
-              if chunk["message"] && chunk["message"]["content"] do
-                send(parent, {:stream_chunk, assistant_message_id, chunk["message"]["content"]})
-              end
-
-              if chunk["done"] do
-                send(parent, {:stream_done, assistant_message_id})
-              end
-            end,
+            stream_callback,
             model: model,
             options: ollama_options
           )
 
-        case result do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            send(parent, {:stream_error, assistant_message_id, reason})
-        end
+        handle_stream_result(result, parent, assistant_message_id)
       end)
 
       # Schedule initial stream timeout
@@ -482,26 +470,32 @@ defmodule OllamaChatWeb.ChatLive do
         |> assign(:status_message, "Starting Ollama...")
         |> assign(:error, nil)
 
-      spawn(fn ->
-        case OllamaClient.start_ollama() do
-          :ok ->
-            send(parent, {:recovery_progress, :waiting})
-            Process.sleep(2000)
-
-            if OllamaClient.ollama_running?() do
-              send(parent, {:recovery_progress, :loading_models})
-              Process.sleep(500)
-              send(parent, :recovery_complete)
-            else
-              send(parent, {:recovery_failed, "Ollama started but not responding"})
-            end
-
-          {:error, reason} ->
-            send(parent, {:recovery_failed, reason})
-        end
-      end)
+      spawn(fn -> attempt_ollama_recovery(parent) end)
 
       {:noreply, socket}
+    end
+  end
+
+  defp attempt_ollama_recovery(parent) do
+    case OllamaClient.start_ollama() do
+      :ok ->
+        handle_successful_ollama_start(parent)
+
+      {:error, reason} ->
+        send(parent, {:recovery_failed, reason})
+    end
+  end
+
+  defp handle_successful_ollama_start(parent) do
+    send(parent, {:recovery_progress, :waiting})
+    Process.sleep(2000)
+
+    if OllamaClient.ollama_running?() do
+      send(parent, {:recovery_progress, :loading_models})
+      Process.sleep(500)
+      send(parent, :recovery_complete)
+    else
+      send(parent, {:recovery_failed, "Ollama started but not responding"})
     end
   end
 
@@ -1882,6 +1876,28 @@ defmodule OllamaChatWeb.ChatLive do
 
   defp format_error(reason), do: "An error occurred: #{inspect(reason)}"
 
+  defp build_stream_callback(parent, message_id) do
+    fn chunk ->
+      if chunk["message"] && chunk["message"]["content"] do
+        send(parent, {:stream_chunk, message_id, chunk["message"]["content"]})
+      end
+
+      if chunk["done"] do
+        send(parent, {:stream_done, message_id})
+      end
+    end
+  end
+
+  defp handle_stream_result(result, parent, message_id) do
+    case result do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        send(parent, {:stream_error, message_id, reason})
+    end
+  end
+
   defp stream_timeout_ms do
     Application.get_env(:ollama_chat, :stream_timeout_ms, 30_000)
   end
@@ -1889,7 +1905,7 @@ defmodule OllamaChatWeb.ChatLive do
   defp cancel_stream_timeout(nil), do: :ok
 
   defp cancel_stream_timeout(ref) do
-    Process.cancel_timer(ref)
+    _result = Process.cancel_timer(ref)
     :ok
   end
 end

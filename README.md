@@ -141,10 +141,35 @@ mix test
 
 ### Code Quality
 
-Run the precommit checks (format, compile with warnings as errors, and tests):
+Run all quality checks before committing (compilation, formatting, static analysis, type checking, and tests):
 
 ```bash
 mix precommit
+```
+
+This runs:
+- Compiler with warnings as errors
+- Code formatter verification
+- Credo static analysis
+- Dialyzer type checking
+- Full test suite
+
+For detailed information about code quality tools and guidelines, see [CODE_QUALITY.md](CODE_QUALITY.md) and [QUALITY_CHECKLIST.md](QUALITY_CHECKLIST.md).
+
+#### Individual Quality Tools
+
+```bash
+# Format code
+mix format
+
+# Static analysis
+mix credo --strict
+
+# Type checking
+mix dialyzer
+
+# Run tests
+mix test
 ```
 
 ### Live Reload

@@ -121,9 +121,10 @@ defmodule OllamaChat.MCPClient do
       end)
 
     # Schedule tool discovery
-    if map_size(clients) > 0 do
-      Process.send_after(self(), :discover_tools, 1000)
-    end
+    _ref =
+      if map_size(clients) > 0 do
+        Process.send_after(self(), :discover_tools, 1000)
+      end
 
     {:noreply, %{state | clients: clients}}
   end
@@ -137,9 +138,10 @@ defmodule OllamaChat.MCPClient do
     OllamaChat.MCPRegistry.register_tools(tools)
 
     # Schedule next discovery
-    if state.discovery_interval > 0 do
-      Process.send_after(self(), :discover_tools, state.discovery_interval)
-    end
+    _ref =
+      if state.discovery_interval > 0 do
+        Process.send_after(self(), :discover_tools, state.discovery_interval)
+      end
 
     {:noreply, %{state | tools: tools, last_discovery: DateTime.utc_now()}}
   end
@@ -204,7 +206,7 @@ defmodule OllamaChat.MCPClient do
              }}
           end)
 
-        {:ok, tools} when is_list(tools) ->
+        {:ok, tools} when is_map(tools) ->
           tools
           |> Enum.map(fn tool ->
             {tool["name"],
@@ -219,11 +221,6 @@ defmodule OllamaChat.MCPClient do
 
         {:error, reason} ->
           Logger.warning("Failed to list tools from #{server_name}: #{inspect(reason)}")
-          []
-
-        other ->
-          Logger.warning("Unexpected response from #{server_name} list_tools: #{inspect(other)}")
-
           []
       end
     end)
@@ -249,10 +246,6 @@ defmodule OllamaChat.MCPClient do
           {:error, reason} ->
             Logger.error("Tool execution failed for #{tool_name}: #{inspect(reason)}")
             {:error, reason}
-
-          other ->
-            Logger.error("Unexpected response from tool #{tool_name}: #{inspect(other)}")
-            {:error, "Unexpected response from tool"}
         end
     end
   end
