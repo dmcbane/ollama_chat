@@ -847,6 +847,54 @@ defmodule OllamaChatWeb.ChatLive do
           <% end %>
         </div>
 
+        <%!-- MCP Tools panel --%>
+        <%= if @mcp_enabled? do %>
+          <div class="mb-4">
+            <button
+              type="button"
+              phx-click="toggle_mcp_settings"
+              class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
+            >
+              <.icon
+                name={if @show_mcp_settings, do: "hero-chevron-down", else: "hero-chevron-right"}
+                class="w-4 h-4"
+              />
+              <.icon name="hero-wrench-screwdriver" class="w-4 h-4" />
+              <span>MCP Tools</span>
+              <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">
+                {map_size(@mcp_tools)}
+              </span>
+            </button>
+            <%= if @show_mcp_settings do %>
+              <div class="mt-2 space-y-2 max-h-96 overflow-y-auto">
+                <%= if map_size(@mcp_tools) == 0 do %>
+                  <p class="text-sm text-gray-400 px-3 py-2">No MCP tools available</p>
+                <% else %>
+                  <div
+                    :for={{name, info} <- @mcp_tools}
+                    class="text-xs p-3 bg-slate-800 rounded-lg border border-slate-700"
+                  >
+                    <div class="flex items-start justify-between gap-2">
+                      <div class="flex-1">
+                        <div class="font-medium text-blue-300 mb-1">{name}</div>
+                        <div class="text-gray-400 text-xs leading-relaxed">{info.description}</div>
+                      </div>
+                      <%= if info.requires_approval do %>
+                        <span class="px-1.5 py-0.5 text-xs bg-yellow-900/50 text-yellow-300 rounded whitespace-nowrap">
+                          Requires approval
+                        </span>
+                      <% end %>
+                    </div>
+                    <div class="mt-2 text-gray-500 text-xs">
+                      Server: <span class="text-gray-400">{info.server}</span>
+                    </div>
+                  </div>
+                <% end %>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+
         <%!-- Generation parameters panel --%>
         <div class="mb-4">
           <button
@@ -1082,49 +1130,160 @@ defmodule OllamaChatWeb.ChatLive do
                 class="animate-fade-in group"
                 data-content={message.content}
               >
-                <%= if message.role == "user" do %>
-                  <div class="flex justify-end">
-                    <div class="relative">
-                      <button
-                        type="button"
-                        class="copy-btn absolute -left-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Copy message"
-                      >
-                        <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
-                        <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
-                      </button>
-                      <div class="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-6 py-3 max-w-[80%] shadow-lg">
-                        <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                      </div>
-                    </div>
-                  </div>
-                <% else %>
-                  <div class="flex justify-start">
-                    <div class="relative">
-                      <%= if not message.streaming do %>
+                <%= cond do %>
+                  <% message.role == "user" -> %>
+                    <div class="flex justify-end">
+                      <div class="relative">
                         <button
                           type="button"
-                          class="copy-btn absolute -right-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                          class="copy-btn absolute -left-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Copy message"
                         >
                           <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
                           <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
                         </button>
-                      <% end %>
-                      <div class="bg-slate-700 text-white rounded-2xl rounded-tl-sm px-6 py-3 max-w-[80%] shadow-lg">
-                        <%= if message.streaming do %>
+                        <div class="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-6 py-3 max-w-[80%] shadow-lg">
                           <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                          <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
-                        <% else %>
-                          <div class="prose-chat">{raw(message.html_content)}</div>
-                        <% end %>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  <% message.role == "tool_call" -> %>
+                    <div class="flex justify-center my-4">
+                      <div class="bg-blue-900/50 border border-blue-700 rounded-lg px-4 py-3 max-w-md">
+                        <div class="flex items-center gap-3">
+                          <.icon
+                            name="hero-wrench-screwdriver"
+                            class="w-5 h-5 text-blue-400 animate-pulse"
+                          />
+                          <div class="flex-1">
+                            <div class="text-sm font-medium text-blue-300">
+                              Calling tool: {message.tool_name}
+                            </div>
+                            <%= if Map.get(message, :args) && map_size(message.args) > 0 do %>
+                              <div class="text-xs text-blue-400 mt-1 font-mono">
+                                {inspect(message.args, pretty: true, limit: 50)}
+                              </div>
+                            <% end %>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  <% message.role == "tool_result" -> %>
+                    <div class="flex justify-center my-4">
+                      <div class="bg-green-900/50 border border-green-700 rounded-lg px-4 py-3 max-w-2xl">
+                        <div class="flex items-start gap-3">
+                          <.icon
+                            name="hero-check-circle"
+                            class="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5"
+                          />
+                          <div class="flex-1 min-w-0">
+                            <div class="text-sm font-medium text-green-300 mb-1">
+                              Tool completed: {message.tool_name}
+                            </div>
+                            <div class="text-xs text-green-400 font-mono overflow-x-auto">
+                              {String.slice(message.content, 0, 200)}{if String.length(
+                                                                           message.content
+                                                                         ) > 200, do: "..."}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  <% message.role == "tool_error" -> %>
+                    <div class="flex justify-center my-4">
+                      <div class="bg-red-900/50 border border-red-700 rounded-lg px-4 py-3 max-w-md">
+                        <div class="flex items-center gap-3">
+                          <.icon name="hero-x-circle" class="w-5 h-5 text-red-400" />
+                          <div class="flex-1">
+                            <div class="text-sm font-medium text-red-300">
+                              Tool failed: {message.tool_name}
+                            </div>
+                            <div class="text-xs text-red-400 mt-1">
+                              {message.content}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  <% true -> %>
+                    <div class="flex justify-start">
+                      <div class="relative">
+                        <%= if not message.streaming do %>
+                          <button
+                            type="button"
+                            class="copy-btn absolute -right-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Copy message"
+                          >
+                            <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
+                            <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                          </button>
+                        <% end %>
+                        <div class="bg-slate-700 text-white rounded-2xl rounded-tl-sm px-6 py-3 max-w-[80%] shadow-lg">
+                          <%= if message.streaming do %>
+                            <p class="whitespace-pre-wrap break-words">{message.content}</p>
+                            <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
+                          <% else %>
+                            <div class="prose-chat">{raw(message.html_content)}</div>
+                          <% end %>
+                        </div>
+                      </div>
+                    </div>
                 <% end %>
               </div>
             </div>
           </div>
+
+          <%!-- Tool Approval Modal --%>
+          <%= if @pending_approval do %>
+            <div
+              class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+              phx-click="cancel_tool_approval"
+            >
+              <div
+                class="bg-slate-800 border border-slate-700 rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl"
+                phx-click-stop
+              >
+                <div class="flex items-center gap-3 mb-4">
+                  <.icon name="hero-shield-exclamation" class="w-8 h-8 text-yellow-400" />
+                  <h3 class="text-xl font-bold text-white">Tool Approval Required</h3>
+                </div>
+
+                <div class="space-y-3 mb-6">
+                  <div>
+                    <div class="text-sm font-medium text-gray-400">Tool</div>
+                    <div class="text-lg text-white font-mono">{@pending_approval.tool_name}</div>
+                  </div>
+
+                  <div>
+                    <div class="text-sm font-medium text-gray-400">Description</div>
+                    <div class="text-white">{@pending_approval.tool_info.description}</div>
+                  </div>
+
+                  <div>
+                    <div class="text-sm font-medium text-gray-400 mb-1">Arguments</div>
+                    <pre class="text-sm text-gray-300 bg-slate-900 p-3 rounded overflow-x-auto">{Jason.encode!(@pending_approval.args, pretty: true)}</pre>
+                  </div>
+                </div>
+
+                <div class="flex gap-3">
+                  <button
+                    type="button"
+                    phx-click="approve_tool"
+                    class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    phx-click="cancel_tool_approval"
+                    class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors"
+                  >
+                    Deny
+                  </button>
+                </div>
+              </div>
+            </div>
+          <% end %>
 
           <%!-- Input form --%>
           <div class="border-t border-slate-700 bg-slate-800/80 p-4">
