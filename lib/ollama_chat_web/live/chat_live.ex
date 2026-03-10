@@ -56,6 +56,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:show_mcp_settings, false)
       |> assign(:streaming_pid, nil)
       |> assign(:attachments, [])
+      |> assign(:context_attachments, [])
       |> stream(:messages, [])
       |> allow_upload(:files,
         accept: :any,
@@ -131,6 +132,18 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("remove_context_attachment", %{"index" => index_str}, socket) do
+    index = String.to_integer(index_str)
+    context_attachments = List.delete_at(socket.assigns.context_attachments, index)
+    {:noreply, assign(socket, :context_attachments, context_attachments)}
+  end
+
+  @impl true
+  def handle_event("clear_all_context", _params, socket) do
+    {:noreply, assign(socket, :context_attachments, [])}
+  end
+
+  @impl true
   def handle_event("cancel_upload", %{"ref" => ref}, socket) do
     {:noreply, cancel_upload(socket, :files, ref)}
   end
@@ -161,16 +174,19 @@ defmodule OllamaChatWeb.ChatLive do
       end)
 
     # Combine uploaded files with existing attachments
-    all_attachments = socket.assigns.attachments ++ uploaded_files
+    new_attachments = socket.assigns.attachments ++ uploaded_files
 
-    if message == "" and all_attachments == [] do
+    # Add new attachments to persistent context
+    all_context_attachments = socket.assigns.context_attachments ++ new_attachments
+
+    if message == "" and new_attachments == [] do
       {:noreply, socket}
     else
-      # Read attachment contents
-      attachment_contents = read_attachments(all_attachments)
+      # Read all context attachment contents (persistent + new)
+      context_contents = read_attachments(all_context_attachments)
 
-      # Combine message with attachment contents
-      full_message = build_message_with_attachments(message, attachment_contents)
+      # Combine message with all attachment contents in context
+      full_message = build_message_with_attachments(message, context_contents)
 
       Logger.info(
         "User sent message (#{String.length(message)} chars) to model=#{socket.assigns.selected_model}"
@@ -183,7 +199,7 @@ defmodule OllamaChatWeb.ChatLive do
         content: full_message,
         html_content: nil,
         timestamp: DateTime.utc_now(),
-        attachments: all_attachments
+        attachments: new_attachments
       }
 
       # Create assistant message placeholder
@@ -240,6 +256,7 @@ defmodule OllamaChatWeb.ChatLive do
         |> assign(:messages_empty?, false)
         |> assign(:message_history, [user_message | socket.assigns.message_history])
         |> assign(:attachments, [])
+        |> assign(:context_attachments, all_context_attachments)
 
       # Start streaming in a separate process
       parent = self()
@@ -1403,13 +1420,58 @@ defmodule OllamaChatWeb.ChatLive do
 
           <%!-- Input form --%>
           <div class="border-t border-slate-700 bg-slate-800/80 p-4">
+            <%!-- Context attachments display --%>
+            <%= if length(@context_attachments) > 0 do %>
+              <div class="mb-3 p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="text-sm text-blue-300 flex items-center gap-2">
+                    <.icon name="hero-document-duplicate" class="w-4 h-4" />
+                    <span>
+                      Context ({length(@context_attachments)} file{if length(@context_attachments) !=
+                                                                        1,
+                                                                      do: "s"})
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    phx-click="clear_all_context"
+                    class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    Clear All
+                  </button>
+                </div>
+                <div class="space-y-1">
+                  <%= for {attachment, index} <- Enum.with_index(@context_attachments) do %>
+                    <div class="flex items-center gap-2 p-2 bg-blue-900/30 rounded text-xs">
+                      <.icon name="hero-document-text" class="w-4 h-4 text-blue-400 flex-shrink-0" />
+                      <div class="flex-1 min-w-0">
+                        <span class="text-blue-200 truncate">{attachment.name}</span>
+                        <span class="text-blue-400 ml-2">({format_file_size(attachment.size)})</span>
+                      </div>
+                      <button
+                        type="button"
+                        phx-click="remove_context_attachment"
+                        phx-value-index={index}
+                        class="p-1 text-blue-400 hover:text-red-400 transition-colors"
+                      >
+                        <.icon name="hero-x-mark" class="w-3 h-3" />
+                      </button>
+                    </div>
+                  <% end %>
+                </div>
+                <div class="mt-2 text-xs text-blue-400">
+                  These files will be included as context in all your messages until removed.
+                </div>
+              </div>
+            <% end %>
+
             <.form for={@form} id="chat-form" phx-submit="send" phx-change="validate">
-              <%!-- File upload area --%>
+              <%!-- File upload area for new attachments --%>
               <%= if length(@uploads.files.entries) > 0 or length(@attachments) > 0 do %>
                 <div class="mb-3 p-3 bg-slate-900/50 rounded-lg border border-slate-600">
                   <div class="text-sm text-slate-400 mb-2 flex items-center gap-2">
                     <.icon name="hero-paper-clip" class="w-4 h-4" />
-                    <span>Attachments</span>
+                    <span>New Attachments (will be added to context)</span>
                   </div>
                   <div class="space-y-2">
                     <%!-- Show uploaded files --%>
@@ -1825,6 +1887,8 @@ defmodule OllamaChatWeb.ChatLive do
     |> assign(:system_prompt_open, false)
     |> assign(:generation_params, default_generation_params())
     |> assign(:generation_params_open, false)
+    |> assign(:context_attachments, [])
+    |> assign(:attachments, [])
     |> push_event("new_conversation", %{})
   end
 
@@ -2136,6 +2200,11 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   defp build_message_with_attachments(message, attachment_contents) do
+    context_header = """
+
+    [CONTEXT FILES - These files are provided as reference for this conversation]
+    """
+
     attachments_text =
       attachment_contents
       |> Enum.map(fn att ->
@@ -2148,10 +2217,12 @@ defmodule OllamaChatWeb.ChatLive do
       end)
       |> Enum.join("\n")
 
+    full_context = context_header <> attachments_text <> "\n[END OF CONTEXT FILES]\n"
+
     if message == "" do
-      "I'm attaching the following files:\n#{attachments_text}"
+      "Please analyze the provided context files." <> full_context
     else
-      "#{message}\n#{attachments_text}"
+      message <> "\n" <> full_context
     end
   end
 

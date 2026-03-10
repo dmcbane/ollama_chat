@@ -9,7 +9,7 @@
 
 ## Overview
 
-This feature enables users to attach files to their chat messages, allowing the LLM to analyze, process, and respond to file contents. Files are uploaded through a drag-and-drop interface or file picker, with their contents automatically included in the conversation context.
+This feature enables users to attach files to their chat messages, allowing the LLM to analyze, process, and respond to file contents. Files are uploaded through a file picker and **persist as context across all subsequent messages** in the conversation until explicitly removed. This allows for continuous discussion about file contents without re-uploading.
 
 ---
 
@@ -21,14 +21,16 @@ This feature enables users to attach files to their chat messages, allowing the 
 2. **Manual Copy-Paste**: Previously required copying and pasting file contents manually
 3. **Large Files**: Difficult to handle large files through manual copying
 4. **Multiple Files**: No way to provide multiple files in a single message
+5. **Persistent Context**: Need files to remain available across multiple questions and follow-ups
 
 ### Use Cases
 
 - **Code Review**: Attach source code files for analysis
-- **Document Analysis**: Upload text documents, markdown, or logs
-- **Data Processing**: Provide CSV, JSON, or XML data files
-- **Debugging**: Share error logs and configuration files
-- **Learning**: Get explanations of code or document content
+- **Document Analysis**: Upload text documents, markdown, or logs - ask multiple questions about them
+- **Data Processing**: Provide CSV, JSON, or XML data files - query and analyze across messages
+- **Debugging**: Share error logs and configuration files - iterate on solutions
+- **Learning**: Get explanations of code or document content - ask follow-up questions
+- **Code Review**: Upload code files once, discuss multiple aspects across conversation
 
 ---
 
@@ -43,13 +45,15 @@ LiveView Upload (Phoenix.LiveView.allow_upload)
     ↓
 File(s) uploaded to temp directory
     ↓
+Files added to persistent context
+    ↓
 File content read and validated
     ↓
-Content prepended to message with clear delimiters
+Content prepended to ALL messages with clear delimiters
     ↓
 Combined message sent to LLM
     ↓
-Temp files cleaned up after processing
+Context persists until user removes files or starts new conversation
 ```
 
 ### Key Components
@@ -87,6 +91,11 @@ end)
 
 ```elixir
 defp build_message_with_attachments(message, attachment_contents) do
+  context_header = """
+  
+  [CONTEXT FILES - These files are provided as reference for this conversation]
+  """
+  
   attachments_text =
     attachment_contents
     |> Enum.map(fn att ->
@@ -99,10 +108,12 @@ defp build_message_with_attachments(message, attachment_contents) do
     end)
     |> Enum.join("\n")
   
+  full_context = context_header <> attachments_text <> "\n[END OF CONTEXT FILES]\n"
+  
   if message == "" do
-    "I'm attaching the following files:\n#{attachments_text}"
+    "Please analyze the provided context files." <> full_context
   else
-    "#{message}\n#{attachments_text}"
+    message <> "\n" <> full_context
   end
 end
 ```
@@ -110,8 +121,10 @@ end
 #### 4. UI Components
 
 - **File Upload Button**: Paper clip icon for selecting files
-- **Attachment Preview**: Shows file name, size, and type
-- **Remove Button**: X button to remove files before sending
+- **Context Display**: Blue section showing persistent context files
+- **Attachment Preview**: Shows file name, size, and type for new uploads
+- **Remove Button**: X button to remove individual context files
+- **Clear All Button**: Remove all context files at once
 - **Progress Indicator**: Shows upload progress for each file
 - **Error Display**: Shows validation errors (size, type, count)
 
@@ -123,26 +136,34 @@ end
 
 **lib/ollama_chat_web/live/chat_live.ex**
 - Lines 58-66: Upload configuration with `allow_upload/3`
-- Lines 58: Added `attachments` assign
-- Lines 129-131: `remove_attachment` event handler
-- Lines 133-136: `validate_upload` event handler
-- Lines 139-241: Updated `send` event to process attachments
-- Lines 1403-1458: Attachment preview UI
-- Lines 1471-1477: File upload button UI
-- Lines 1511-1519: Upload error display
-- Lines 2049-2090: Attachment processing functions
+- Lines 58: Added `attachments` assign (temporary, per-message)
+- Lines 59: Added `context_attachments` assign (persistent context)
+- Lines 132-138: `remove_context_attachment` event handler
+- Lines 140-144: `clear_all_context` event handler
+- Lines 146-149: `cancel_upload` event handler
+- Lines 151-154: `validate_upload` event handler
+- Lines 157-263: Updated `send` event to handle context attachments
+- Lines 1423-1466: Context attachments display UI (blue section)
+- Lines 1468-1523: New attachments preview UI
+- Lines 1534-1540: File upload button UI
+- Lines 1574-1582: Upload error display
+- Lines 1889-1891: Clear context on new conversation
+- Lines 2173-2227: Attachment processing functions
 
 ### New Socket Assigns
 
 | Assign | Type | Purpose |
 |--------|------|---------|
-| `attachments` | `list()` | Stores processed attachment metadata |
+| `attachments` | `list()` | Stores new attachment metadata (cleared after send) |
+| `context_attachments` | `list()` | Stores persistent context files (remain across messages) |
 
 ### New Event Handlers
 
 | Event | Parameters | Purpose |
 |-------|-----------|---------|
-| `remove_attachment` | `%{"ref" => ref}` | Remove attachment before sending |
+| `remove_attachment` | `%{"ref" => ref}` | Remove new attachment before sending |
+| `remove_context_attachment` | `%{"index" => index}` | Remove file from persistent context |
+| `clear_all_context` | `_params` | Clear all context files at once |
 | `cancel_upload` | `%{"ref" => ref}` | Cancel file upload in progress |
 | `validate_upload` | `_params` | Validate uploaded files |
 
@@ -154,10 +175,13 @@ end
 
 1. **Click Paper Clip Icon**: Opens file picker
 2. **Select Files**: Choose 1-5 files (max 10MB each)
-3. **Preview Attachments**: See file name and size
-4. **Optional**: Remove unwanted files with X button
+3. **Preview Attachments**: See file name and size in "New Attachments" section
+4. **Optional**: Remove unwanted files with X button before sending
 5. **Type Message** (optional): Add context or instructions
-6. **Click Send**: File contents included in message
+6. **Click Send**: Files move to persistent "Context" section (blue)
+7. **Continue Chatting**: Files remain available for all subsequent messages
+8. **Remove When Done**: Click X on individual files or "Clear All" button
+9. **New Conversation**: Automatically clears all context files
 
 ### Visual Feedback
 
@@ -166,11 +190,23 @@ end
 - Green icon when complete
 - Blue icon for pending uploads
 
+**Context Display** (Blue Section):
+- Shows persistent files available in all messages
+- Count display: "Context (3 files)"
+- Clear All button to remove all at once
+- Compact list with remove buttons
+- Informative text explaining persistence
+
+**New Attachments Display** (Gray Section):
+- Shows files being added in current message
+- Will be added to context when sent
+- Same removal capability as context files
+
 **File Display**:
 - 📄 Document icon for each file
 - File name (truncated if long)
 - File size in human-readable format (KB, MB)
-- Remove button (X) on hover
+- Remove button (X) for each file
 
 **Errors**:
 - Red text below form for validation errors
@@ -285,28 +321,53 @@ Path.join([System.tmp_dir(), "ollama_chat_uploads", entry.uuid])
 
 **User Action**: Attach `server.ex` file
 
-**Message**: "Review this code for potential bugs"
+**Message 1**: "Review this code for potential bugs"
 
 **LLM Receives**:
 ```
 Review this code for potential bugs
+
+[CONTEXT FILES - These files are provided as reference for this conversation]
 
 --- File: server.ex (4.2KB) ---
 defmodule MyApp.Server do
   # ... file contents ...
 end
 --- End of server.ex ---
+
+[END OF CONTEXT FILES]
+```
+
+**Message 2**: "Now check for performance issues"
+
+**LLM Receives** (file still in context):
+```
+Now check for performance issues
+
+[CONTEXT FILES - These files are provided as reference for this conversation]
+
+--- File: server.ex (4.2KB) ---
+defmodule MyApp.Server do
+  # ... file contents ...
+end
+--- End of server.ex ---
+
+[END OF CONTEXT FILES]
 ```
 
 ### Multiple File Analysis
 
 **User Action**: Attach `error.log`, `config.json`
 
-**Message**: "Why is my app crashing?"
+**Message 1**: "Why is my app crashing?"
+**Message 2**: "What config changes would fix this?"
+**Message 3**: "Are there any security concerns in the config?"
 
-**LLM Receives**:
+**All messages receive** (files persist in context):
 ```
-Why is my app crashing?
+[User question here]
+
+[CONTEXT FILES - These files are provided as reference for this conversation]
 
 --- File: error.log (15.3KB) ---
 [ERROR] Connection refused...
@@ -315,27 +376,54 @@ Why is my app crashing?
 --- File: config.json (2.1KB) ---
 {"port": 3000, ...}
 --- End of config.json ---
+
+[END OF CONTEXT FILES]
 ```
 
 ### Data Analysis
 
 **User Action**: Attach `data.csv`
 
-**Message**: "Analyze this sales data"
+**Message 1**: "Analyze this sales data"
+**Message 2**: "What were the top 3 products?"
+**Message 3**: "Show me a trend analysis"
 
-**LLM Receives**:
+**All messages include** (data persists):
 ```
-Analyze this sales data
+[User question here]
+
+[CONTEXT FILES - These files are provided as reference for this conversation]
 
 --- File: data.csv (25.6KB) ---
 Date,Product,Sales,Revenue
 2024-01-01,Widget,100,500
 --- End of data.csv ---
+
+[END OF CONTEXT FILES]
 ```
 
 ---
 
 ## UI Components
+
+### Context Display (Blue Section)
+
+```elixir
+<div class="p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
+  <div class="flex items-center justify-between mb-2">
+    <div class="text-sm text-blue-300">
+      Context ({length(@context_attachments)} files)
+    </div>
+    <button phx-click="clear_all_context">Clear All</button>
+  </div>
+  <!-- File list with remove buttons -->
+  <div class="text-xs text-blue-400">
+    These files will be included as context in all your messages until removed.
+  </div>
+</div>
+```
+
+**Styling**: Blue background, informative text, compact layout
 
 ### File Upload Button
 
@@ -348,7 +436,7 @@ Date,Product,Sales,Revenue
 
 **Styling**: Gray button with paper clip icon, hover effect
 
-### Attachment Preview
+### New Attachments Preview
 
 ```elixir
 <div class="flex items-center gap-2 p-2 bg-slate-800 rounded">
@@ -455,10 +543,11 @@ mix credo --strict          # 1 minor refactoring opportunity
 
 1. **No Image Support**: Images uploaded but not rendered or analyzed specially
 2. **Text Only**: Binary files appear as garbled text
-3. **No Persistence**: Files not saved to database (temp only)
+3. **No Database Persistence**: Files stored in temp directory only (in-memory context)
 4. **No Preview**: Can't preview file contents before sending
-5. **Single Message**: Can't reuse attachments across messages
+5. **Token Multiplication**: Context files sent with EVERY message (increases token usage)
 6. **Manual Cleanup**: Temp files accumulate until OS cleanup
+7. **Session Only**: Context cleared when starting new conversation or page reload
 
 ---
 
@@ -504,6 +593,17 @@ accept: :any                 # Any file type
 
 ## Troubleshooting
 
+### Context Files Not Persisting
+
+**Issue**: Files disappear after first message
+
+**Cause**: Not looking at "Context" section - check blue area above input
+
+**Solutions**:
+1. Look for blue "Context" section showing persistent files
+2. Files should appear there after sending first message
+3. If missing, try uploading again
+
 ### Files Not Uploading
 
 **Issue**: Click paper clip but nothing happens
@@ -529,10 +629,23 @@ accept: :any                 # Any file type
 **Issue**: Files uploaded but LLM doesn't see them
 
 **Solutions**:
-1. Check that files appear in preview before sending
-2. Verify "Attachments" section shows files
-3. Check browser network tab for upload completion
-4. Try removing and re-adding files
+1. Check that files appear in "Context" section (blue) after sending
+2. Files should show "Context (X files)" at top of input area
+3. Verify files uploaded completely before clicking Send
+4. Check browser network tab for upload completion
+5. Try removing and re-adding files
+
+### High Token Usage
+
+**Issue**: Messages cost too many tokens
+
+**Cause**: Context files included in every message
+
+**Solutions**:
+1. Remove files from context when done discussing them
+2. Use "Clear All" to remove all context files
+3. Keep context files small (< 100KB recommended)
+4. Start new conversation to clear context
 
 ### Strange Characters in LLM Response
 
@@ -548,11 +661,14 @@ accept: :any                 # Any file type
 
 ### For Users
 
-1. **Keep Files Small**: Under 1MB is ideal
+1. **Keep Files Small**: Under 1MB is ideal (they're sent with every message)
 2. **Text Files Only**: Code, logs, configs, data
 3. **Add Context**: Include message explaining what you want
 4. **Check Preview**: Verify files uploaded before sending
-5. **One Topic**: Group related files in single message
+5. **One Topic**: Group related files together
+6. **Remove When Done**: Clear context files when switching topics
+7. **Monitor Context**: Check blue section to see what's in context
+8. **New Conversation**: Start fresh when changing topics completely
 
 ### For Developers
 
@@ -585,20 +701,21 @@ accept: :any                 # Any file type
 
 ## Success Criteria
 
-✅ **Functional**: Users can attach files to messages  
+✅ **Functional**: Users can attach files that persist across messages  
 ✅ **Reliable**: Uploads don't fail or corrupt files  
 ✅ **Fast**: Upload and processing under 5 seconds for 1MB  
-✅ **Clear**: UI shows file status and errors  
+✅ **Clear**: UI shows context status and allows management  
 ✅ **Safe**: File size and count limits enforced  
+✅ **Persistent**: Context maintained across conversation  
 ✅ **Quality**: All tests pass, no Dialyzer/Credo issues
 
 ---
 
 ## Conclusion
 
-The file attachments feature significantly enhances the chat experience by allowing users to share code, documents, and data files directly with the LLM. The implementation uses Phoenix LiveView's built-in upload functionality for a robust, secure solution with minimal custom code.
+The file attachments feature significantly enhances the chat experience by allowing users to share code, documents, and data files directly with the LLM, with **persistent context** that maintains files across multiple messages. This enables natural, multi-turn conversations about file contents without re-uploading. The implementation uses Phoenix LiveView's built-in upload functionality for a robust, secure solution with minimal custom code.
 
-The feature is production-ready with proper error handling, validation, and user feedback. Future enhancements will focus on image support, better cleanup, and improved preview functionality.
+The feature is production-ready with proper error handling, validation, and user feedback. The persistent context design allows for deep, iterative discussions about code, documents, and data. Future enhancements will focus on image support, better cleanup, improved preview functionality, and context size optimization.
 
 ---
 
