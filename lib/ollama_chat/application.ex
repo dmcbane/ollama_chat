@@ -11,6 +11,9 @@ defmodule OllamaChat.Application do
       OllamaChatWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:ollama_chat, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: OllamaChat.PubSub},
+      # MCP support
+      OllamaChat.MCPRegistry,
+      OllamaChat.MCPClient,
       # Start a worker by calling: OllamaChat.Worker.start_link(arg)
       # {OllamaChat.Worker, arg},
       # Start to serve requests, typically the last entry

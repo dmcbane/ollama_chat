@@ -80,3 +80,29 @@ config :phoenix_live_view,
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# MCP (Model Context Protocol) Configuration for Development
+config :ollama_chat, :mcp_enabled, true
+
+config :ollama_chat, :mcp_servers, [
+  %{
+    name: :filesystem,
+    display_name: "File System (Dev)",
+    description: "Read and write files in test workspace",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", Path.expand("./tmp/mcp_workspace")],
+    enabled: true,
+    # Auto-approve in dev for faster testing
+    requires_approval: false,
+    dangerous_tools: ["write_file", "create_directory", "move_file", "delete_file"]
+  },
+  %{
+    name: :time,
+    display_name: "Time",
+    description: "Time and timezone operations",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-time"],
+    enabled: true,
+    requires_approval: false
+  }
+]
