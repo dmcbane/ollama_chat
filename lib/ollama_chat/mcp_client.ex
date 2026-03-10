@@ -189,6 +189,7 @@ defmodule OllamaChat.MCPClient do
     )
   end
 
+  @dialyzer {:nowarn_function, discover_all_tools: 1}
   defp discover_all_tools(clients) do
     clients
     |> Enum.flat_map(fn {server_name, client_info} ->
@@ -210,8 +211,15 @@ defmodule OllamaChat.MCPClient do
              }}
           end)
 
+        {:ok, _other} ->
+          Logger.warning("Unexpected response format from #{server_name}")
+          []
+
         {:error, reason} ->
           Logger.warning("Failed to list tools from #{server_name}: #{inspect(reason)}")
+          []
+
+        _ ->
           []
       end
     end)
@@ -241,6 +249,7 @@ defmodule OllamaChat.MCPClient do
     end
   end
 
+  @dialyzer {:nowarn_function, requires_approval?: 2}
   defp requires_approval?(server_config, tool_name) do
     server_config.requires_approval ||
       tool_name in Map.get(server_config, :dangerous_tools, [])

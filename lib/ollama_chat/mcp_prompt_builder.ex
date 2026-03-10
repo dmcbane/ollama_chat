@@ -197,7 +197,13 @@ defmodule OllamaChat.MCPPromptBuilder do
     A formatted message string with the tool result
 
   """
-  @spec build_tool_result_message(String.t(), list()) :: String.t()
+  @spec build_tool_result_message(String.t(), list() | struct()) :: String.t()
+  def build_tool_result_message(tool_name, %ExMCP.Response{content: content})
+      when is_list(content) do
+    # Handle ExMCP.Response struct by extracting the content list
+    build_tool_result_message(tool_name, content)
+  end
+
   def build_tool_result_message(tool_name, result) when is_list(result) do
     formatted_result = format_tool_result(result)
 
@@ -212,8 +218,15 @@ defmodule OllamaChat.MCPPromptBuilder do
 
   defp format_tool_result(result) when is_list(result) do
     Enum.map_join(result, "\n\n", fn
+      # Handle both string keys and atom keys
+      %{type: "text", text: text} ->
+        text
+
       %{"type" => "text", "text" => text} ->
         text
+
+      %{type: "image", data: _data, mimeType: mime_type} ->
+        "[Image: #{mime_type}]"
 
       %{"type" => "image", "data" => _data, "mimeType" => mime_type} ->
         "[Image: #{mime_type}]"

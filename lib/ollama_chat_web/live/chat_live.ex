@@ -80,7 +80,13 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
-  def handle_event("validate", %{"message" => message}, socket) do
+  def handle_event("validate", %{"message" => message}, socket) when is_binary(message) do
+    {:noreply, assign(socket, :form, to_form(%{"message" => message}))}
+  end
+
+  @impl true
+  def handle_event("validate", %{"_target" => ["message"]} = params, socket) do
+    message = params["value"] || ""
     {:noreply, assign(socket, :form, to_form(%{"message" => message}))}
   end
 
@@ -1308,7 +1314,7 @@ defmodule OllamaChatWeb.ChatLive do
                     disabled={@loading}
                     rows="4"
                     phx-hook=".PreventEnterSubmit"
-                    class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize-y min-h-[100px]"
+                    class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize-y min-h-[100px] px-4 py-3"
                   />
                 </div>
                 <button
