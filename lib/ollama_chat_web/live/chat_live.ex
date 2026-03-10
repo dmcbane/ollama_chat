@@ -1,7 +1,7 @@
 defmodule OllamaChatWeb.ChatLive do
   use OllamaChatWeb, :live_view
 
-  alias OllamaChat.{Markdown, OllamaClient, MCPClient, MCPPromptBuilder, MCPResponseParser}
+  alias OllamaChat.{Markdown, MCPClient, MCPPromptBuilder, MCPResponseParser, OllamaClient}
 
   require Logger
 
@@ -452,7 +452,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:stream_timeout_ref, nil)
 
     # Check if it's a connection error and attempt recovery
-    if is_connection_error?(reason) do
+    if connection_error?(reason) do
       Logger.info("Connection error detected, initiating recovery")
       send(self(), {:attempt_recovery, message_id})
 
@@ -1634,7 +1634,7 @@ defmodule OllamaChatWeb.ChatLive do
     |> push_event("new_conversation", %{})
   end
 
-  defp is_connection_error?(reason) do
+  defp connection_error?(reason) do
     cond do
       is_struct(reason, Req.TransportError) ->
         reason.reason == :econnrefused or reason.reason == :timeout
@@ -1853,8 +1853,7 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   defp format_tool_result(result) when is_list(result) do
-    result
-    |> Enum.map(fn
+    Enum.map_join(result, "\n\n", fn
       %{"type" => "text", "text" => text} ->
         text
 
@@ -1867,7 +1866,6 @@ defmodule OllamaChatWeb.ChatLive do
       other ->
         inspect(other)
     end)
-    |> Enum.join("\n\n")
   end
 
   defp format_tool_result(result), do: inspect(result)

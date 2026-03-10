@@ -84,11 +84,9 @@ defmodule OllamaChat.MCPPromptBuilder do
 
   defp format_tools(tools) do
     tool_list =
-      tools
-      |> Enum.map(fn {name, info} ->
+      Enum.map_join(tools, "\n\n", fn {name, info} ->
         format_single_tool(name, info)
       end)
-      |> Enum.join("\n\n")
 
     """
     ## Available Tools:
@@ -127,11 +125,9 @@ defmodule OllamaChat.MCPPromptBuilder do
     if map_size(properties) == 0 do
       "  (no parameters required)"
     else
-      properties
-      |> Enum.map(fn {key, value} ->
+      Enum.map_join(properties, "\n", fn {key, value} ->
         format_parameter(key, value, key in required)
       end)
-      |> Enum.join("\n")
     end
   end
 
@@ -215,8 +211,7 @@ defmodule OllamaChat.MCPPromptBuilder do
   end
 
   defp format_tool_result(result) when is_list(result) do
-    result
-    |> Enum.map(fn
+    Enum.map_join(result, "\n\n", fn
       %{"type" => "text", "text" => text} ->
         text
 
@@ -230,7 +225,6 @@ defmodule OllamaChat.MCPPromptBuilder do
       other ->
         inspect(other)
     end)
-    |> Enum.join("\n\n")
   end
 
   @doc """

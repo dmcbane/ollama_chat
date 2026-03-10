@@ -57,9 +57,8 @@ defmodule OllamaChat.MCPResponseParser do
   # Try parsing strategies in order
   defp try_parse_strategies(text) do
     with :no_tool_call <- try_json_parse(text),
-         :no_tool_call <- try_code_block_parse(text),
-         :no_tool_call <- try_text_pattern_parse(text) do
-      :no_tool_call
+         :no_tool_call <- try_code_block_parse(text) do
+      try_text_pattern_parse(text)
     end
   end
 
@@ -358,7 +357,7 @@ defmodule OllamaChat.MCPResponseParser do
         not Map.has_key?(args, field)
       end)
 
-    if length(missing_required) > 0 do
+    if missing_required != [] do
       {:error, "Missing required parameters: #{Enum.join(missing_required, ", ")}"}
     else
       # Basic type checking
@@ -384,7 +383,7 @@ defmodule OllamaChat.MCPResponseParser do
         end
       end)
 
-    if length(errors) > 0 do
+    if errors != [] do
       {:error, Enum.join(errors, "; ")}
     else
       :ok
