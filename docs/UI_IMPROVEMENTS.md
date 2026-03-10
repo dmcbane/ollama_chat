@@ -14,7 +14,100 @@ This document tracks UI/UX improvements made to the Ollama Chat application to e
 
 ## Improvements Made
 
-### 1. Collapsible Tool Messages ✅
+### 1. Cancel/Stop Streaming ✅
+
+**Date**: February 27, 2024  
+**Issue**: No way to stop a running task once started  
+**Priority**: High (user control)
+
+#### Problem
+- Once a message was sent, users had to wait for the entire response
+- No way to cancel if the response was taking too long or was not useful
+- No way to stop if user realized they made a mistake in their prompt
+- Send button showed "Sending..." but no cancel option
+- Poor user experience for long-running requests
+
+#### Solution
+Implemented cancel/stop functionality with dynamic button transformation:
+
+**Backend Changes**:
+- Track streaming process PID in socket assigns (`streaming_pid`)
+- Add `handle_event("cancel_stream")` to kill streaming process
+- Cancel any pending stream timeout timers
+- Clear all streaming state when cancelled
+
+**Frontend Changes**:
+- Transform Send button into Cancel button when `@loading` is true
+- Cancel button styled in red for clear visual distinction
+- Shows X-circle icon instead of paper airplane
+- Returns to Send button when task completes or is cancelled
+
+```elixir
+# Dynamic button rendering
+<%= if @loading do %>
+  <button type="button" phx-click="cancel_stream" class="bg-red-600">
+    <.icon name="hero-x-circle" />
+    <span>Cancel</span>
+  </button>
+<% else %>
+  <button type="submit" class="bg-blue-600">
+    <.icon name="hero-paper-airplane" />
+    <span>Send</span>
+  </button>
+<% end %>
+```
+
+**Process Management**:
+```elixir
+# Track spawned process
+pid = spawn(fn -> 
+  OllamaClient.chat_stream(...)
+end)
+assign(socket, :streaming_pid, pid)
+
+# Cancel handler
+def handle_event("cancel_stream", _params, socket) do
+  case socket.assigns.streaming_pid do
+    nil -> :ok
+    pid -> Process.exit(pid, :kill)
+  end
+  # Clear streaming state...
+end
+```
+
+#### Benefits
+- ✅ Users can stop requests at any time
+- ✅ Immediate feedback with button transformation
+- ✅ Prevents wasted resources on unwanted responses
+- ✅ Better user control and experience
+- ✅ Clear visual distinction (blue Send vs red Cancel)
+- ✅ Graceful cleanup of streaming state
+
+#### Technical Details
+- **Files Modified**: 
+  - `lib/ollama_chat_web/live/chat_live.ex` (Lines 57, 94-120, 211-217, multiple cleanup locations)
+- **New Assigns**: `streaming_pid` to track process
+- **Process Management**: Kill streaming process and cancel timers
+- **State Cleanup**: Clear `loading`, `streaming_pid`, `stream_timeout_ref`, `streaming_message`
+- **Breaking Changes**: None
+- **Performance Impact**: None (actually improves by stopping unwanted work)
+
+#### Before/After
+```html
+<!-- Before: No cancel option -->
+<button type="submit" disabled>
+  <icon>arrow-path</icon> Sending...
+</button>
+
+<!-- After: Cancel button while streaming -->
+<button type="button" phx-click="cancel_stream">
+  <icon>x-circle</icon> Cancel
+</button>
+```
+
+---
+
+### 2. Collapsible Tool Messages ✅
 
 **Date**: February 27, 2024  
 **Issue**: Tool call and result messages cluttered the chat interface  
@@ -137,6 +230,11 @@ class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 foc
 
 ### High Priority
 
+- [x] **Cancel/Stop Streaming** ✅
+  - Allow users to stop current request
+  - Transform Send → Cancel button
+  - Completed February 27, 2024
+
 - [x] **Collapsible Tool Messages** ✅
   - Hide tool execution details by default
   - Allow users to expand when needed
@@ -233,7 +331,7 @@ class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 foc
 |-----------|----------|--------|-------|
 | Chat Message Bubble | `chat_live.ex:1166-1186` | ✅ Good | Markdown rendering works well |
 | Input Textarea | `chat_live.ex:1309-1318` | ✅ Good | Recently improved with padding |
-| Send Button | `chat_live.ex:1320-1331` | ✅ Good | Clear disabled state |
+| Send/Cancel Button | `chat_live.ex:1355-1380` | ✅ Excellent | Dynamic transformation, cancel support |
 | Model Selector | `chat_live.ex:1190-1220` | ✅ Good | Dropdown works smoothly |
 | Error Display | `chat_live.ex:1263-1277` | ✅ Good | Clear error messages |
 | Tool Approval Dialog | `chat_live.ex:1279-1303` | ✅ Good | Clear approve/deny actions |
@@ -364,6 +462,9 @@ Tools to use:
 ## Change Log
 
 ### 2024-02-27
+- ✅ Added cancel/stop streaming functionality
+- ✅ Implemented dynamic Send/Cancel button transformation
+- ✅ Added streaming process tracking with PID
 - ✅ Added collapsible containers for tool messages and empty responses
 - ✅ Implemented animated chevron for details element
 - ✅ Added `empty_response?/1` helper function

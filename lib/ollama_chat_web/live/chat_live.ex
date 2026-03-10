@@ -54,6 +54,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:mcp_tools, %{})
       |> assign(:pending_approval, nil)
       |> assign(:show_mcp_settings, false)
+      |> assign(:streaming_pid, nil)
       |> stream(:messages, [])
 
     socket =
@@ -88,6 +89,32 @@ defmodule OllamaChatWeb.ChatLive do
   def handle_event("validate", %{"_target" => ["message"]} = params, socket) do
     message = params["value"] || ""
     {:noreply, assign(socket, :form, to_form(%{"message" => message}))}
+  end
+
+  @impl true
+  def handle_event("cancel_stream", _params, socket) do
+    # Kill the streaming process if it exists
+    _exit_result =
+      case socket.assigns.streaming_pid do
+        nil -> :ok
+        pid -> Process.exit(pid, :kill)
+      end
+
+    # Cancel any pending timeout
+    _cancel_result =
+      case socket.assigns.stream_timeout_ref do
+        nil -> :ok
+        ref -> Process.cancel_timer(ref)
+      end
+
+    socket =
+      socket
+      |> assign(:loading, false)
+      |> assign(:streaming_pid, nil)
+      |> assign(:stream_timeout_ref, nil)
+      |> assign(:streaming_message, "")
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -169,25 +196,31 @@ defmodule OllamaChatWeb.ChatLive do
       model = socket.assigns.selected_model
       ollama_options = build_ollama_options(socket.assigns.generation_params)
 
-      spawn(fn ->
-        stream_callback = build_stream_callback(parent, assistant_message_id)
+      pid =
+        spawn(fn ->
+          stream_callback = build_stream_callback(parent, assistant_message_id)
 
-        result =
-          OllamaClient.chat_stream(
-            messages_for_api,
-            stream_callback,
-            model: model,
-            options: ollama_options
-          )
+          result =
+            OllamaClient.chat_stream(
+              messages_for_api,
+              stream_callback,
+              model: model,
+              options: ollama_options
+            )
 
-        handle_stream_result(result, parent, assistant_message_id)
-      end)
+          handle_stream_result(result, parent, assistant_message_id)
+        end)
 
       # Schedule initial stream timeout
       timeout_ref =
         Process.send_after(self(), {:stream_timeout, assistant_message_id}, stream_timeout_ms())
 
-      {:noreply, assign(socket, :stream_timeout_ref, timeout_ref)}
+      socket =
+        socket
+        |> assign(:stream_timeout_ref, timeout_ref)
+        |> assign(:streaming_pid, pid)
+
+      {:noreply, socket}
     end
   end
 
@@ -431,6 +464,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:message_history, updated_history)
       |> assign(:ollama_status, :running)
       |> assign(:stream_timeout_ref, nil)
+      |> assign(:streaming_pid, nil)
 
     # Auto-save conversation after each completed exchange
     conversation_data = %{
@@ -460,6 +494,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:loading, false)
       |> assign(:streaming_message, "")
       |> assign(:stream_timeout_ref, nil)
+      |> assign(:streaming_pid, nil)
 
     # Check if it's a connection error and attempt recovery
     if connection_error?(reason) do
@@ -604,6 +639,7 @@ defmodule OllamaChatWeb.ChatLive do
       socket
       |> stream_insert(:messages, error_message)
       |> assign(:loading, false)
+      |> assign(:streaming_pid, nil)
       |> assign(:error, "Tool execution failed: #{tool_name}")
 
     {:noreply, socket}
@@ -640,6 +676,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:pending_approval, nil)
       |> assign(:error, "Tool execution cancelled by user")
       |> assign(:loading, false)
+      |> assign(:streaming_pid, nil)
 
     {:noreply, socket}
   end
@@ -668,6 +705,7 @@ defmodule OllamaChatWeb.ChatLive do
         socket
         |> stream_delete(:messages, %{id: message_id})
         |> assign(:loading, false)
+        |> assign(:streaming_pid, nil)
         |> assign(:streaming_message, "")
         |> assign(:stream_timeout_ref, nil)
         |> assign(
@@ -1329,24 +1367,32 @@ defmodule OllamaChatWeb.ChatLive do
                     class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize-y min-h-[100px] px-4 py-3"
                   />
                 </div>
-                <button
-                  type="submit"
-                  disabled={@loading}
-                  class={[
-                    "px-6 py-3 rounded-lg font-medium transition-all duration-200",
-                    "bg-blue-600 hover:bg-blue-700 text-white",
-                    "disabled:opacity-50 disabled:cursor-not-allowed",
-                    "flex items-center gap-2 flex-shrink-0"
-                  ]}
-                >
-                  <%= if @loading do %>
-                    <.icon name="hero-arrow-path" class="w-5 h-5 animate-spin" />
-                    <span>Sending...</span>
-                  <% else %>
+                <%= if @loading do %>
+                  <button
+                    type="button"
+                    phx-click="cancel_stream"
+                    class={[
+                      "px-6 py-3 rounded-lg font-medium transition-all duration-200",
+                      "bg-red-600 hover:bg-red-700 text-white",
+                      "flex items-center gap-2 flex-shrink-0"
+                    ]}
+                  >
+                    <.icon name="hero-x-circle" class="w-5 h-5" />
+                    <span>Cancel</span>
+                  </button>
+                <% else %>
+                  <button
+                    type="submit"
+                    class={[
+                      "px-6 py-3 rounded-lg font-medium transition-all duration-200",
+                      "bg-blue-600 hover:bg-blue-700 text-white",
+                      "flex items-center gap-2 flex-shrink-0"
+                    ]}
+                  >
                     <.icon name="hero-paper-airplane" class="w-5 h-5" />
                     <span>Send</span>
-                  <% end %>
-                </button>
+                  </button>
+                <% end %>
               </div>
             </.form>
           </div>
@@ -1744,6 +1790,7 @@ defmodule OllamaChatWeb.ChatLive do
               args: args
             })
             |> assign(:loading, false)
+            |> assign(:streaming_pid, nil)
           else
             # Execute immediately
             execute_mcp_tool(socket, message_id, tool_name, args)
@@ -1755,6 +1802,7 @@ defmodule OllamaChatWeb.ChatLive do
           socket
           |> assign(:error, "Invalid tool arguments: #{validation_error}")
           |> assign(:loading, false)
+          |> assign(:streaming_pid, nil)
       end
     else
       Logger.warning("Unknown tool requested: #{tool_name}")
@@ -1762,6 +1810,7 @@ defmodule OllamaChatWeb.ChatLive do
       socket
       |> assign(:error, "Unknown tool: #{tool_name}")
       |> assign(:loading, false)
+      |> assign(:streaming_pid, nil)
     end
   end
 
@@ -1852,36 +1901,44 @@ defmodule OllamaChatWeb.ChatLive do
     model = socket.assigns.selected_model
     ollama_options = build_ollama_options(socket.assigns.generation_params)
 
-    spawn(fn ->
-      result =
-        OllamaClient.chat_stream(
-          messages_for_api,
-          fn chunk ->
-            if chunk["message"] && chunk["message"]["content"] do
-              send(parent, {:stream_chunk, continuation_message_id, chunk["message"]["content"]})
-            end
+    pid =
+      spawn(fn ->
+        result =
+          OllamaClient.chat_stream(
+            messages_for_api,
+            fn chunk ->
+              if chunk["message"] && chunk["message"]["content"] do
+                send(
+                  parent,
+                  {:stream_chunk, continuation_message_id, chunk["message"]["content"]}
+                )
+              end
 
-            if chunk["done"] do
-              send(parent, {:stream_done, continuation_message_id})
-            end
-          end,
-          model: model,
-          options: ollama_options
-        )
+              if chunk["done"] do
+                send(parent, {:stream_done, continuation_message_id})
+              end
+            end,
+            model: model,
+            options: ollama_options
+          )
 
-      case result do
-        :ok ->
-          :ok
+        case result do
+          :ok ->
+            :ok
 
-        {:error, reason} ->
-          send(parent, {:stream_error, continuation_message_id, reason})
-      end
-    end)
+          {:error, reason} ->
+            send(parent, {:stream_error, continuation_message_id, reason})
+        end
+      end)
 
     # Reset streaming state
+    socket =
+      socket
+      |> assign(:streaming_message, "")
+      |> assign(:loading, true)
+      |> assign(:streaming_pid, pid)
+
     socket
-    |> assign(:streaming_message, "")
-    |> assign(:loading, true)
   end
 
   defp empty_response?(content) when is_binary(content) do
