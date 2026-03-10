@@ -66,34 +66,37 @@ echo '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | \
   npx -y @modelcontextprotocol/server-filesystem ./tmp/mcp_workspace
 ```
 
-### 2. Time Server
+### 2. Everything Server (Demo)
 
-**Package**: `@modelcontextprotocol/server-time`
+**Package**: `@modelcontextprotocol/server-everything`
 
-**Purpose**: Provide current time and timezone information
+**Purpose**: Demo MCP server with various test tools for development
 
 **Tools Provided**:
-- `get_current_time` - Get current time in specified format/timezone
-- `convert_time` - Convert time between timezones
-- `get_timestamp` - Get Unix timestamp
+- `echo` - Echo back input string
+- `get-sum` - Returns sum of two numbers
+- `get-tiny-image` - Returns a tiny MCP logo image
+- `get-structured-content` - Returns structured content with validation
+- `trigger-long-running-operation` - Demonstrates progress updates
+- And more demo tools...
 
 **Configuration**:
 ```elixir
 %{
-  name: :time,
-  display_name: "Time",
-  description: "Time and timezone operations",
+  name: :everything,
+  display_name: "Everything (Demo)",
+  description: "Demo MCP server with various test tools",
   command: "npx",
-  args: ["-y", "@modelcontextprotocol/server-time"],
-  enabled: true,
+  args: ["-y", "@modelcontextprotocol/server-everything"],
+  enabled: false,  # Disabled by default, enable for testing
   requires_approval: false
 }
 ```
 
 **Testing Manually**:
 ```bash
-# Start the time server
-npx -y @modelcontextprotocol/server-time
+# Start the everything server
+npx -y @modelcontextprotocol/server-everything stdio
 ```
 
 ## Development Workflow
@@ -211,12 +214,12 @@ config :ollama_chat, :mcp_servers, [
     dangerous_tools: ["write_file", "create_directory", "move_file", "delete_file"]
   },
   %{
-    name: :time,
-    display_name: "Time",
-    description: "Time and timezone operations",
+    name: :everything,
+    display_name: "Everything (Demo)",
+    description: "Demo MCP server with various test tools",
     command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-time"],
-    enabled: true,
+    args: ["-y", "@modelcontextprotocol/server-everything"],
+    enabled: false,  # Disabled by default
     requires_approval: false
   }
 ]
@@ -283,7 +286,7 @@ end
 1. Pre-install packages:
    ```bash
    npm install -g @modelcontextprotocol/server-filesystem
-   npm install -g @modelcontextprotocol/server-time
+   npm install -g @modelcontextprotocol/server-everything
    ```
 2. Use local installation instead of npx
 3. Wait for initial download (only happens once)

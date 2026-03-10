@@ -376,7 +376,7 @@ Overall Progress:             ████████████░░░░�
 - Node.js 18+ (for MCP servers)
 - npm/npx (for MCP server management)
 - @modelcontextprotocol/server-filesystem
-- @modelcontextprotocol/server-time
+- @modelcontextprotocol/server-everything (optional, for testing)
 
 ### Internal Dependencies
 - ex_mcp v0.8.0+

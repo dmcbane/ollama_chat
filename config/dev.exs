@@ -97,12 +97,12 @@ config :ollama_chat, :mcp_servers, [
     dangerous_tools: ["write_file", "create_directory", "move_file", "delete_file"]
   },
   %{
-    name: :time,
-    display_name: "Time",
-    description: "Time and timezone operations",
+    name: :everything,
+    display_name: "Everything (Demo)",
+    description: "Demo MCP server with various test tools",
     command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-time"],
-    enabled: true,
+    args: ["-y", "@modelcontextprotocol/server-everything"],
+    enabled: false,
     requires_approval: false
   }
 ]

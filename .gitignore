@@ -34,6 +34,7 @@ ollama_chat-*.tar
 # In case you use Node.js/npm, you want to ignore these.
 npm-debug.log
 /assets/node_modules/
+/node_modules/
 
 # Ignore Dialyzer PLT files
 /priv/plts/*.plt
