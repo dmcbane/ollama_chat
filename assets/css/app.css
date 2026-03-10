@@ -128,6 +128,23 @@
     scroll-behavior: smooth;
 }
 
+/* Collapsible details chevron animation */
+details summary .details-chevron {
+    transition: transform 0.2s ease;
+}
+
+details[open] summary .details-chevron {
+    transform: rotate(90deg);
+}
+
+details summary {
+    list-style: none;
+}
+
+details summary::-webkit-details-marker {
+    display: none;
+}
+
 /* Markdown prose styles for assistant messages inside dark bg-slate-700 bubbles */
 .prose-chat {
     line-height: 1.65;
@@ -200,7 +217,9 @@
     padding: 0.15em 0.35em;
     border-radius: 0.25rem;
     font-size: 0.875em;
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-family:
+        ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+        "Liberation Mono", monospace;
 }
 
 /* Lists */

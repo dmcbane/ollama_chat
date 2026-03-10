@@ -1163,47 +1163,39 @@ defmodule OllamaChatWeb.ChatLive do
                         </div>
                       </div>
                     </div>
-                  <% message.role == "tool_call" -> %>
-                    <div class="flex justify-center my-4">
-                      <div class="bg-blue-900/50 border border-blue-700 rounded-lg px-4 py-3 max-w-md">
-                        <div class="flex items-center gap-3">
-                          <.icon
-                            name="hero-wrench-screwdriver"
-                            class="w-5 h-5 text-blue-400 animate-pulse"
-                          />
-                          <div class="flex-1">
-                            <div class="text-sm font-medium text-blue-300">
-                              Calling tool: {message.tool_name}
-                            </div>
+                  <% message.role == "tool_call" or message.role == "tool_result" -> %>
+                    <div class="flex justify-center my-2">
+                      <details class="bg-slate-800/50 border border-slate-600 rounded-lg max-w-2xl w-full">
+                        <summary class="px-4 py-2 cursor-pointer hover:bg-slate-700/50 rounded-lg transition-colors flex items-center gap-2 text-sm text-slate-400">
+                          <.icon name="hero-chevron-right" class="w-4 h-4 details-chevron" />
+                          <%= if message.role == "tool_call" do %>
+                            <.icon name="hero-wrench-screwdriver" class="w-4 h-4 text-blue-400" />
+                            <span>
+                              Calling tool:
+                              <span class="font-mono text-blue-300">{message.tool_name}</span>
+                            </span>
+                          <% else %>
+                            <.icon name="hero-check-circle" class="w-4 h-4 text-green-400" />
+                            <span>
+                              Tool completed:
+                              <span class="font-mono text-green-300">{message.tool_name}</span>
+                            </span>
+                          <% end %>
+                        </summary>
+                        <div class="px-4 py-3 border-t border-slate-600">
+                          <%= if message.role == "tool_call" do %>
+                            <div class="text-sm text-blue-300 mb-2 font-medium">Tool Arguments:</div>
                             <%= if Map.get(message, :args) && map_size(message.args) > 0 do %>
-                              <div class="text-xs text-blue-400 mt-1 font-mono">
-                                {inspect(message.args, pretty: true, limit: 50)}
-                              </div>
+                              <pre class="text-xs text-blue-400 font-mono bg-slate-900/50 rounded p-2 overflow-x-auto">{inspect(message.args, pretty: true)}</pre>
+                            <% else %>
+                              <div class="text-xs text-slate-400 italic">No arguments</div>
                             <% end %>
-                          </div>
+                          <% else %>
+                            <div class="text-sm text-green-300 mb-2 font-medium">Tool Result:</div>
+                            <pre class="text-xs text-green-400 font-mono bg-slate-900/50 rounded p-2 overflow-x-auto whitespace-pre-wrap">{message.content}</pre>
+                          <% end %>
                         </div>
-                      </div>
-                    </div>
-                  <% message.role == "tool_result" -> %>
-                    <div class="flex justify-center my-4">
-                      <div class="bg-green-900/50 border border-green-700 rounded-lg px-4 py-3 max-w-2xl">
-                        <div class="flex items-start gap-3">
-                          <.icon
-                            name="hero-check-circle"
-                            class="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5"
-                          />
-                          <div class="flex-1 min-w-0">
-                            <div class="text-sm font-medium text-green-300 mb-1">
-                              Tool completed: {message.tool_name}
-                            </div>
-                            <div class="text-xs text-green-400 font-mono overflow-x-auto">
-                              {String.slice(message.content, 0, 200)}{if String.length(
-                                                                           message.content
-                                                                         ) > 200, do: "..."}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      </details>
                     </div>
                   <% message.role == "tool_error" -> %>
                     <div class="flex justify-center my-4">
@@ -1222,28 +1214,48 @@ defmodule OllamaChatWeb.ChatLive do
                       </div>
                     </div>
                   <% true -> %>
-                    <div class="flex justify-start">
-                      <div class="relative">
-                        <%= if not message.streaming do %>
-                          <button
-                            type="button"
-                            class="copy-btn absolute -right-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Copy message"
-                          >
-                            <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
-                            <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
-                          </button>
-                        <% end %>
-                        <div class="bg-slate-700 text-white rounded-2xl rounded-tl-sm px-6 py-3 max-w-[80%] shadow-lg">
-                          <%= if message.streaming do %>
-                            <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                            <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
-                          <% else %>
-                            <div class="prose-chat">{raw(message.html_content)}</div>
+                    <%= if empty_response?(message.content) and not message.streaming do %>
+                      <div class="flex justify-center my-2">
+                        <details class="bg-slate-800/50 border border-slate-600 rounded-lg max-w-2xl w-full">
+                          <summary class="px-4 py-2 cursor-pointer hover:bg-slate-700/50 rounded-lg transition-colors flex items-center gap-2 text-sm text-slate-400">
+                            <.icon name="hero-chevron-right" class="w-4 h-4 details-chevron" />
+                            <.icon
+                              name="hero-chat-bubble-left-ellipsis"
+                              class="w-4 h-4 text-slate-400"
+                            />
+                            <span>Intermediate response (empty)</span>
+                          </summary>
+                          <div class="px-4 py-3 border-t border-slate-600">
+                            <div class="text-xs text-slate-400 italic">
+                              This response contained only whitespace.
+                            </div>
+                          </div>
+                        </details>
+                      </div>
+                    <% else %>
+                      <div class="flex justify-start">
+                        <div class="relative">
+                          <%= if not message.streaming do %>
+                            <button
+                              type="button"
+                              class="copy-btn absolute -right-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Copy message"
+                            >
+                              <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
+                              <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                            </button>
                           <% end %>
+                          <div class="bg-slate-700 text-white rounded-2xl rounded-tl-sm px-6 py-3 max-w-[80%] shadow-lg">
+                            <%= if message.streaming do %>
+                              <p class="whitespace-pre-wrap break-words">{message.content}</p>
+                              <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
+                            <% else %>
+                              <div class="prose-chat">{raw(message.html_content)}</div>
+                            <% end %>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    <% end %>
                 <% end %>
               </div>
             </div>
@@ -1871,6 +1883,12 @@ defmodule OllamaChatWeb.ChatLive do
     |> assign(:streaming_message, "")
     |> assign(:loading, true)
   end
+
+  defp empty_response?(content) when is_binary(content) do
+    String.trim(content) == ""
+  end
+
+  defp empty_response?(_), do: false
 
   defp format_tool_result(result) when is_list(result) do
     Enum.map_join(result, "\n\n", fn

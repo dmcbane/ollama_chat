@@ -14,7 +14,78 @@ This document tracks UI/UX improvements made to the Ollama Chat application to e
 
 ## Improvements Made
 
-### 1. Textarea Padding Enhancement ✅
+### 1. Collapsible Tool Messages ✅
+
+**Date**: February 27, 2024  
+**Issue**: Tool call and result messages cluttered the chat interface  
+**Priority**: Medium (UX improvement)
+
+#### Problem
+- Tool execution messages (calling tool, tool completed) were displayed prominently in the chat
+- Tool arguments and results took up significant space
+- Intermediate empty responses (whitespace only) were displayed as regular messages
+- Made it difficult to focus on actual conversation content
+- No way to hide technical details when not needed
+
+#### Solution
+Wrapped tool messages and empty intermediate responses in collapsible `<details>` elements:
+
+```elixir
+<details class="bg-slate-800/50 border border-slate-600 rounded-lg">
+  <summary class="px-4 py-2 cursor-pointer hover:bg-slate-700/50">
+    <icon> Tool name and status
+  </summary>
+  <div class="px-4 py-3 border-t border-slate-600">
+    Full tool arguments/results
+  </div>
+</details>
+```
+
+**Messages Now Collapsed**:
+- Tool call messages (`role: "tool_call"`)
+- Tool result messages (`role: "tool_result"`)
+- Empty intermediate responses (whitespace-only content)
+
+**CSS Enhancements**:
+- Chevron icon rotates 90° when details opened
+- Smooth transitions (0.2s ease)
+- Hover states for better interactivity
+
+#### Benefits
+- ✅ Cleaner chat interface - technical details hidden by default
+- ✅ Users can expand details when needed
+- ✅ Empty responses no longer clutter the conversation
+- ✅ Better focus on actual AI responses
+- ✅ Native `<details>` element - accessible and keyboard-friendly
+- ✅ Animated chevron provides clear visual feedback
+
+#### Technical Details
+- **Files Modified**: 
+  - `lib/ollama_chat_web/live/chat_live.ex` (Lines 1166-1257)
+  - `assets/css/app.css` (Lines 131-146)
+- **Helper Function**: `empty_response?/1` to detect whitespace-only content
+- **Component**: Native HTML `<details>` and `<summary>` elements
+- **Breaking Changes**: None
+- **Performance Impact**: None (lighter DOM than previous implementation)
+
+#### Before/After
+```html
+<!-- Before: Always visible -->
+<div class="bg-blue-900/50 border border-blue-700">
+  Calling tool: list_allowed_directories
+  Args: %{...}
+</div>
+
+<!-- After: Collapsed by default -->
+<details class="bg-slate-800/50 border border-slate-600">
+  <summary>🔧 Calling tool: list_allowed_directories</summary>
+  <div>Tool Arguments: %{...}</div>
+</details>
+```
+
+---
+
+### 2. Textarea Padding Enhancement ✅
 
 **Date**: February 27, 2024  
 **Issue**: Cursor difficult to see at textarea borders  
@@ -65,6 +136,11 @@ class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 foc
 ## Future UI Improvements (Backlog)
 
 ### High Priority
+
+- [x] **Collapsible Tool Messages** ✅
+  - Hide tool execution details by default
+  - Allow users to expand when needed
+  - Completed February 27, 2024
 
 - [ ] **Loading Spinner Enhancement**
   - Add percentage/token count during streaming
@@ -288,6 +364,9 @@ Tools to use:
 ## Change Log
 
 ### 2024-02-27
+- ✅ Added collapsible containers for tool messages and empty responses
+- ✅ Implemented animated chevron for details element
+- ✅ Added `empty_response?/1` helper function
 - ✅ Added padding to textarea input (px-4 py-3)
 - ✅ Created UI improvements documentation
 
