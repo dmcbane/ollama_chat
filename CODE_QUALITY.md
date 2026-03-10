@@ -37,7 +37,7 @@ The compiler checks for common issues:
 - No pattern match warnings
 - Functions are grouped by name/arity (advisory warning)
 
-**Note**: Function grouping warnings are advisory in this project. In large LiveView modules, feature-based organization (grouping related `handle_event` and `handle_info` callbacks together) is prioritized over strict function name grouping for better maintainability.
+**Note on Function Grouping**: The `ChatLive` module intentionally uses feature-based organization rather than grouping all clauses of the same function together. This produces 4 advisory compiler warnings which are accepted as a design decision for maintainability in this large module (1900+ lines). See `KNOWN_ISSUES.md` and the module's `@moduledoc` for details.
 
 **Configuration**: `mix.exs`
 
@@ -374,11 +374,11 @@ Track these metrics over time:
 
 ✅ **196/196 tests passing** (100% pass rate)
 ✅ **0 Dialyzer errors** (strict type checking)
-✅ **0 Credo issues** (strict mode - all resolved)
-✅ **4 compiler warnings** (function grouping - advisory only)
+✅ **0 high-priority Credo issues**
+ℹ️ **4 compiler warnings** (function grouping - intentional design decision)
 ✅ **All code formatted**
 
 The codebase maintains high quality standards with comprehensive tooling and automation. The precommit task passes successfully, focusing on critical correctness issues while treating style preferences as advisory.
 
-See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for details on the function grouping trade-offs in large LiveView modules.
+**Note**: The 4 function grouping warnings in `ChatLive` are intentional. The module uses feature-based organization for better maintainability in large LiveView modules. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for detailed discussion.
 See [CREDO_FIXES_SUMMARY.md](CREDO_FIXES_SUMMARY.md) for details on how all Credo issues were resolved.

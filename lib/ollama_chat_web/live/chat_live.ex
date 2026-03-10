@@ -1,4 +1,20 @@
 defmodule OllamaChatWeb.ChatLive do
+  @moduledoc """
+  Main LiveView for the chat interface.
+
+  ## Function Organization
+
+  This module uses feature-based organization rather than grouping all clauses
+  of the same function together. This means `handle_event/3` and `handle_info/2`
+  clauses are grouped by feature (streaming, tools, recovery, etc.) rather than
+  by function name.
+
+  This produces compiler warnings about ungrouped clauses, which are accepted
+  as a trade-off for better maintainability in this large module (1900+ lines).
+
+  See KNOWN_ISSUES.md for detailed discussion of this design decision.
+  """
+
   use OllamaChatWeb, :live_view
 
   alias OllamaChat.{Markdown, MCPClient, MCPPromptBuilder, MCPResponseParser, OllamaClient}
