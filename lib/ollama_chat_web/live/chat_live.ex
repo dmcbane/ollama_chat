@@ -55,7 +55,14 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:pending_approval, nil)
       |> assign(:show_mcp_settings, false)
       |> assign(:streaming_pid, nil)
+      |> assign(:attachments, [])
       |> stream(:messages, [])
+      |> allow_upload(:files,
+        accept: :any,
+        max_entries: 5,
+        max_file_size: 10_000_000,
+        auto_upload: true
+      )
 
     socket =
       if connected?(socket) and socket.assigns.mcp_enabled? do
@@ -118,12 +125,53 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("remove_attachment", %{"ref" => ref}, socket) do
+    attachments = Enum.reject(socket.assigns.attachments, fn att -> att.ref == ref end)
+    {:noreply, assign(socket, :attachments, attachments)}
+  end
+
+  @impl true
+  def handle_event("cancel_upload", %{"ref" => ref}, socket) do
+    {:noreply, cancel_upload(socket, :files, ref)}
+  end
+
+  @impl true
+  def handle_event("validate_upload", _params, socket) do
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("send", %{"message" => message_text}, socket) do
     message = String.trim(message_text)
 
-    if message == "" do
+    # Process any uploaded files
+    uploaded_files =
+      consume_uploaded_entries(socket, :files, fn %{path: path}, entry ->
+        dest = Path.join([System.tmp_dir(), "ollama_chat_uploads", entry.uuid])
+        File.mkdir_p!(Path.dirname(dest))
+        File.cp!(path, dest)
+
+        {:ok,
+         %{
+           name: entry.client_name,
+           path: dest,
+           content_type: entry.client_type,
+           size: entry.client_size
+         }}
+      end)
+
+    # Combine uploaded files with existing attachments
+    all_attachments = socket.assigns.attachments ++ uploaded_files
+
+    if message == "" and all_attachments == [] do
       {:noreply, socket}
     else
+      # Read attachment contents
+      attachment_contents = read_attachments(all_attachments)
+
+      # Combine message with attachment contents
+      full_message = build_message_with_attachments(message, attachment_contents)
+
       Logger.info(
         "User sent message (#{String.length(message)} chars) to model=#{socket.assigns.selected_model}"
       )
@@ -132,9 +180,10 @@ defmodule OllamaChatWeb.ChatLive do
       user_message = %{
         id: generate_id(),
         role: "user",
-        content: message,
+        content: full_message,
         html_content: nil,
-        timestamp: DateTime.utc_now()
+        timestamp: DateTime.utc_now(),
+        attachments: all_attachments
       }
 
       # Create assistant message placeholder
@@ -190,6 +239,7 @@ defmodule OllamaChatWeb.ChatLive do
         |> assign(:streaming_message, "")
         |> assign(:messages_empty?, false)
         |> assign(:message_history, [user_message | socket.assigns.message_history])
+        |> assign(:attachments, [])
 
       # Start streaming in a separate process
       parent = self()
@@ -1354,6 +1404,61 @@ defmodule OllamaChatWeb.ChatLive do
           <%!-- Input form --%>
           <div class="border-t border-slate-700 bg-slate-800/80 p-4">
             <.form for={@form} id="chat-form" phx-submit="send" phx-change="validate">
+              <%!-- File upload area --%>
+              <%= if length(@uploads.files.entries) > 0 or length(@attachments) > 0 do %>
+                <div class="mb-3 p-3 bg-slate-900/50 rounded-lg border border-slate-600">
+                  <div class="text-sm text-slate-400 mb-2 flex items-center gap-2">
+                    <.icon name="hero-paper-clip" class="w-4 h-4" />
+                    <span>Attachments</span>
+                  </div>
+                  <div class="space-y-2">
+                    <%!-- Show uploaded files --%>
+                    <%= for entry <- @uploads.files.entries do %>
+                      <div class="flex items-center gap-2 p-2 bg-slate-800 rounded">
+                        <.icon name="hero-document-text" class="w-5 h-5 text-blue-400 flex-shrink-0" />
+                        <div class="flex-1 min-w-0">
+                          <div class="text-sm text-white truncate">{entry.client_name}</div>
+                          <div class="text-xs text-slate-400">
+                            {format_file_size(entry.client_size)}
+                            <%= if entry.progress > 0 and entry.progress < 100 do %>
+                              • Uploading {entry.progress}%
+                            <% end %>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          phx-click="cancel_upload"
+                          phx-value-ref={entry.ref}
+                          class="p-1 text-slate-400 hover:text-red-400 transition-colors"
+                        >
+                          <.icon name="hero-x-mark" class="w-4 h-4" />
+                        </button>
+                      </div>
+                    <% end %>
+                    <%!-- Show existing attachments --%>
+                    <%= for attachment <- @attachments do %>
+                      <div class="flex items-center gap-2 p-2 bg-slate-800 rounded">
+                        <.icon name="hero-document-text" class="w-5 h-5 text-green-400 flex-shrink-0" />
+                        <div class="flex-1 min-w-0">
+                          <div class="text-sm text-white truncate">{attachment.name}</div>
+                          <div class="text-xs text-slate-400">
+                            {format_file_size(attachment.size)}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          phx-click="remove_attachment"
+                          phx-value-ref={attachment.ref}
+                          class="p-1 text-slate-400 hover:text-red-400 transition-colors"
+                        >
+                          <.icon name="hero-x-mark" class="w-4 h-4" />
+                        </button>
+                      </div>
+                    <% end %>
+                  </div>
+                </div>
+              <% end %>
+
               <div class="flex gap-3 items-end">
                 <div class="flex-1 max-w-full overflow-auto max-h-[500px]">
                   <.input
@@ -1367,6 +1472,14 @@ defmodule OllamaChatWeb.ChatLive do
                     class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize-y min-h-[100px] px-4 py-3"
                   />
                 </div>
+                <%!-- File upload button --%>
+                <label
+                  for={@uploads.files.ref}
+                  class="flex items-center justify-center px-4 py-3 rounded-lg font-medium transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-white cursor-pointer flex-shrink-0"
+                >
+                  <.icon name="hero-paper-clip" class="w-5 h-5" />
+                  <.live_file_input upload={@uploads.files} class="hidden" />
+                </label>
                 <%= if @loading do %>
                   <button
                     type="button"
@@ -1394,6 +1507,13 @@ defmodule OllamaChatWeb.ChatLive do
                   </button>
                 <% end %>
               </div>
+
+              <%!-- Upload errors --%>
+              <%= for err <- upload_errors(@uploads.files) do %>
+                <div class="mt-2 text-sm text-red-400">
+                  {error_to_string(err)}
+                </div>
+              <% end %>
             </.form>
           </div>
         </div>
@@ -1988,6 +2108,61 @@ defmodule OllamaChatWeb.ChatLive do
       end
     end
   end
+
+  defp read_attachments(attachments) do
+    Enum.map(attachments, fn att ->
+      case File.read(att.path) do
+        {:ok, content} ->
+          %{
+            name: att.name,
+            content: content,
+            type: att.content_type,
+            size: att.size
+          }
+
+        {:error, _} ->
+          %{
+            name: att.name,
+            content: "[Error reading file]",
+            type: att.content_type,
+            size: att.size
+          }
+      end
+    end)
+  end
+
+  defp build_message_with_attachments(message, []) do
+    message
+  end
+
+  defp build_message_with_attachments(message, attachment_contents) do
+    attachments_text =
+      attachment_contents
+      |> Enum.map(fn att ->
+        """
+
+        --- File: #{att.name} (#{format_file_size(att.size)}) ---
+        #{att.content}
+        --- End of #{att.name} ---
+        """
+      end)
+      |> Enum.join("\n")
+
+    if message == "" do
+      "I'm attaching the following files:\n#{attachments_text}"
+    else
+      "#{message}\n#{attachments_text}"
+    end
+  end
+
+  defp format_file_size(bytes) when bytes < 1024, do: "#{bytes}B"
+  defp format_file_size(bytes) when bytes < 1024 * 1024, do: "#{Float.round(bytes / 1024, 2)}KB"
+  defp format_file_size(bytes), do: "#{Float.round(bytes / 1024 / 1024, 2)}MB"
+
+  defp error_to_string(:too_large), do: "File is too large (max 10MB)"
+  defp error_to_string(:not_accepted), do: "File type not accepted"
+  defp error_to_string(:too_many_files), do: "Too many files (max 5)"
+  defp error_to_string(err), do: "Upload error: #{inspect(err)}"
 
   defp handle_stream_result(result, parent, message_id) do
     case result do

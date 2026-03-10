@@ -14,7 +14,97 @@ This document tracks UI/UX improvements made to the Ollama Chat application to e
 
 ## Improvements Made
 
-### 1. Cancel/Stop Streaming ✅
+### 1. File Attachments ✅
+
+**Date**: February 27, 2024  
+**Issue**: No way to share files with the LLM  
+**Priority**: Medium (Enhanced Functionality)
+
+#### Problem
+- Users couldn't share code files, documents, or data files directly
+- Required manual copy-pasting of file contents
+- Difficult to share multiple files or large files
+- No visual feedback for file handling
+- Limited context sharing capability
+
+#### Solution
+Implemented file attachment support using Phoenix LiveView uploads:
+
+**Backend Changes**:
+- Added `allow_upload/3` configuration for file uploads
+- Process uploaded files with `consume_uploaded_entries/2`
+- Read file contents and prepend to messages
+- Automatic cleanup of uploaded entries after sending
+
+**Frontend Changes**:
+- Paper clip button for file selection
+- Attachment preview with file name and size
+- Remove button (X) for each attachment
+- Upload progress indication
+- Error display for validation failures
+
+```elixir
+# Upload configuration
+allow_upload(:files,
+  accept: :any,
+  max_entries: 5,
+  max_file_size: 10_000_000,  # 10MB
+  auto_upload: true
+)
+
+# File processing
+uploaded_files = consume_uploaded_entries(socket, :files, fn %{path: path}, entry ->
+  # Copy to temp location and return metadata
+end)
+
+# Build message with attachments
+defp build_message_with_attachments(message, attachment_contents) do
+  # Prepend file contents with clear delimiters
+  attachments_text = """
+  --- File: #{name} (#{size}) ---
+  #{content}
+  --- End of #{name} ---
+  """
+end
+```
+
+**Features**:
+- Support for any file type (optimized for text-based files)
+- Multiple file uploads (up to 5 files)
+- File size limit (10MB per file)
+- Clear visual preview of attachments
+- Remove files before sending
+- Progress indication during upload
+
+#### Benefits
+- ✅ Users can share files directly with LLM
+- ✅ Support for code review, document analysis, data processing
+- ✅ No manual copy-paste required
+- ✅ Multiple files in single message
+- ✅ Clear visual feedback and error handling
+- ✅ Secure with size and count limits
+- ✅ Works with any text-based file format
+
+#### Technical Details
+- **Files Modified**: 
+  - `lib/ollama_chat_web/live/chat_live.ex` (Lines 58-66, 129-241, 1403-1519, 2049-2090)
+- **New Assigns**: `attachments` list to track uploaded files
+- **Event Handlers**: `remove_attachment`, `cancel_upload`, `validate_upload`
+- **File Processing**: Read contents, format with delimiters, prepend to message
+- **Breaking Changes**: None
+- **Performance Impact**: Files loaded into memory (~10MB max per file)
+
+#### Use Cases
+```
+Code Review: Attach server.ex → "Review this code for bugs"
+Data Analysis: Attach data.csv → "Analyze this sales data"  
+Debugging: Attach error.log + config.json → "Why is my app crashing?"
+Learning: Attach algorithm.py → "Explain how this works"
+```
+
+---
+
+### 2. Cancel/Stop Streaming ✅
 
 **Date**: February 27, 2024  
 **Issue**: No way to stop a running task once started  
@@ -107,7 +197,7 @@ end
 
 ---
 
-### 2. Collapsible Tool Messages ✅
+### 3. Collapsible Tool Messages ✅
 
 **Date**: February 27, 2024  
 **Issue**: Tool call and result messages cluttered the chat interface  
@@ -178,7 +268,7 @@ Wrapped tool messages and empty intermediate responses in collapsible `<details>
 
 ---
 
-### 2. Textarea Padding Enhancement ✅
+### 4. Textarea Padding Enhancement ✅
 
 **Date**: February 27, 2024  
 **Issue**: Cursor difficult to see at textarea borders  
@@ -229,6 +319,11 @@ class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 foc
 ## Future UI Improvements (Backlog)
 
 ### High Priority
+
+- [x] **File Attachments** ✅
+  - Allow users to attach files to messages
+  - Support code, documents, and data files
+  - Completed February 27, 2024
 
 - [x] **Cancel/Stop Streaming** ✅
   - Allow users to stop current request
@@ -462,6 +557,9 @@ Tools to use:
 ## Change Log
 
 ### 2024-02-27
+- ✅ Added file attachment support with upload/preview/remove
+- ✅ Implemented file content integration with messages
+- ✅ Added attachment preview UI with size display
 - ✅ Added cancel/stop streaming functionality
 - ✅ Implemented dynamic Send/Cancel button transformation
 - ✅ Added streaming process tracking with PID
