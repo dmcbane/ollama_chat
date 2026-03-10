@@ -827,6 +827,133 @@ This section documents features that have been completed beyond the original MVP
 
 ---
 
+### MCP (Model Context Protocol) Client Capabilities
+
+**Status**: Planned
+
+**Description**: Integrate Model Context Protocol (MCP) client capabilities to enable the chat interface to interact with external tools, services, and data sources through MCP servers. This allows LLMs to perform real-world tasks like file operations, API calls, database queries, and more.
+
+**Use Case**: Users need their LLM conversations to interact with external systems—reading files, executing commands, querying databases, calling APIs, etc. MCP provides a standardized protocol for LLMs to access tools and resources without custom integrations for each service.
+
+**What is MCP?**
+Model Context Protocol is an open protocol developed by Anthropic that standardizes how applications provide context to LLMs. It enables:
+- **Tools**: Functions the LLM can call (e.g., file operations, API requests)
+- **Resources**: Data sources the LLM can access (e.g., files, databases)
+- **Prompts**: Pre-configured prompt templates
+- **Sampling**: Server-controlled LLM interactions
+
+**Implementation Approach**:
+
+1. **MCP Client Library Integration**
+   - Add Elixir MCP client library or implement protocol directly using JSON-RPC 2.0
+   - Support stdio and SSE (Server-Sent Events) transport mechanisms
+   - Handle connection lifecycle (initialize, capabilities negotiation, shutdown)
+
+2. **MCP Server Management**
+   - Configuration file (e.g., `config/mcp_servers.exs`) to define available MCP servers
+   - Each server config: name, command, arguments, environment variables, enabled status
+   - Start MCP servers as supervised processes under the application supervision tree
+   - Health monitoring and automatic restart on failure
+
+3. **Tool Discovery and Registration**
+   - Query connected MCP servers for available tools on startup
+   - Maintain registry of tools with schemas (name, description, parameters)
+   - Expose tool list to UI for visibility into available capabilities
+
+4. **Tool Calling Integration**
+   - Extend message flow to support tool calls:
+     - LLM requests tool execution via Ollama's function calling (if supported)
+     - Parse tool call requests from LLM responses
+     - Execute tools by calling appropriate MCP server
+     - Inject tool results back into conversation context
+     - LLM processes results and continues response
+   - Handle multi-step tool calling (LLM may need multiple tool calls)
+
+5. **UI Enhancements**
+   - Display tool calls in chat (e.g., "🔧 Calling tool: read_file")
+   - Show tool execution status and results
+   - Allow users to approve/deny tool calls (security feature)
+   - Settings panel to enable/disable specific MCP servers
+   - Indicator when MCP capabilities are active
+
+6. **Security Considerations**
+   - User approval for sensitive operations (file writes, command execution)
+   - Sandboxing and permission controls for MCP servers
+   - Audit logging of all tool executions
+   - Rate limiting to prevent abuse
+
+**Example MCP Servers to Support**:
+- **Filesystem MCP**: Read/write files, list directories
+- **Database MCP**: Query SQL databases
+- **HTTP MCP**: Make API requests
+- **Git MCP**: Repository operations
+- **Brave Search MCP**: Web search capabilities
+- **Puppeteer MCP**: Browser automation
+- **Slack MCP**: Team communication
+- **Google Drive MCP**: Document access
+
+**Technical Architecture**:
+```
+User Message
+  ↓
+ChatLive (LiveView)
+  ↓
+OllamaClient.chat_stream/3
+  ↓
+LLM Response (may include tool calls)
+  ↓
+MCPClient.execute_tool/3
+  ↓
+MCP Server (via JSON-RPC)
+  ↓
+Tool Result
+  ↓
+Back to LLM with result in context
+  ↓
+Final Response to User
+```
+
+**Configuration Example**:
+```elixir
+# config/mcp_servers.exs
+config :ollama_chat, :mcp_servers, [
+  %{
+    name: "filesystem",
+    command: "mcp-server-filesystem",
+    args: ["--base-path", "/home/user/workspace"],
+    enabled: true
+  },
+  %{
+    name: "brave-search",
+    command: "mcp-server-brave-search",
+    env: [{"BRAVE_API_KEY", System.get_env("BRAVE_API_KEY")}],
+    enabled: true
+  }
+]
+```
+
+**Benefits**:
+- Transforms chat interface from pure conversation to actionable AI assistant
+- Standardized protocol means easy addition of new capabilities
+- Leverages existing MCP ecosystem (many servers already available)
+- Users can accomplish real tasks without leaving the chat interface
+- Extensible architecture for custom tool development
+- Better context for LLMs through resource access
+
+**Challenges**:
+- Ollama may have limited function calling support compared to OpenAI/Anthropic
+- Need robust error handling for tool failures
+- Security is critical—must prevent malicious tool usage
+- UI complexity increases with tool approval workflows
+- Performance considerations with multiple tool calls
+
+**References**:
+- MCP Specification: https://spec.modelcontextprotocol.io/
+- MCP Servers Repository: https://github.com/modelcontextprotocol/servers
+- Anthropic MCP Documentation: https://www.anthropic.com/news/model-context-protocol
+
+---
+
 ## Routing
 
 ### Route Structure
