@@ -36,6 +36,8 @@ defmodule OllamaChatWeb.ChatLive do
         Application.get_env(:ollama_chat, :ollama_default_model, "llama3")
       )
       |> assign(:streaming_message, "")
+      |> assign(:streaming_events, [])
+      |> assign(:streaming_message_id, nil)
       |> assign(:messages_empty?, true)
       |> assign(:form, to_form(%{"message" => ""}))
       |> assign(:message_history, [])
@@ -121,6 +123,8 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:streaming_pid, nil)
       |> assign(:stream_timeout_ref, nil)
       |> assign(:streaming_message, "")
+      |> assign(:streaming_events, [])
+      |> assign(:streaming_message_id, nil)
 
     {:noreply, socket}
   end
@@ -253,6 +257,8 @@ defmodule OllamaChatWeb.ChatLive do
         |> assign(:error, nil)
         |> assign(:status_message, nil)
         |> assign(:streaming_message, "")
+        |> assign(:streaming_events, [])
+        |> assign(:streaming_message_id, assistant_message_id)
         |> assign(:messages_empty?, false)
         |> assign(:message_history, [user_message | socket.assigns.message_history])
         |> assign(:attachments, [])
@@ -475,6 +481,28 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   defp stream_normal_chunk(socket, message_id, new_content) do
+    # Capture intermediate events for collapsible container
+    current_events = socket.assigns.streaming_events
+
+    # Add current content as a streaming event (only if content changed)
+    last_event = List.last(current_events)
+
+    should_add =
+      current_events == [] or
+        (last_event && last_event.type == :chunk && last_event.content != new_content) or
+        (last_event && last_event.type != :chunk)
+
+    updated_events =
+      if should_add do
+        current_events ++ [%{type: :chunk, content: new_content, timestamp: DateTime.utc_now()}]
+      else
+        current_events
+      end
+
+    Logger.debug(
+      "Streaming: message_id=#{message_id}, events=#{length(updated_events)}, content_length=#{String.length(new_content)}"
+    )
+
     # Update the streaming message
     updated_message = %{
       id: message_id,
@@ -495,6 +523,7 @@ defmodule OllamaChatWeb.ChatLive do
       socket
       |> stream_insert(:messages, updated_message)
       |> assign(:streaming_message, new_content)
+      |> assign(:streaming_events, updated_events)
       |> assign(:stream_timeout_ref, timeout_ref)
 
     {:noreply, socket}
@@ -528,6 +557,8 @@ defmodule OllamaChatWeb.ChatLive do
       |> stream_insert(:messages, final_message)
       |> assign(:loading, false)
       |> assign(:streaming_message, "")
+      |> assign(:streaming_events, [])
+      |> assign(:streaming_message_id, nil)
       |> assign(:message_history, updated_history)
       |> assign(:ollama_status, :running)
       |> assign(:stream_timeout_ref, nil)
@@ -560,6 +591,8 @@ defmodule OllamaChatWeb.ChatLive do
       |> stream_delete(:messages, %{id: message_id})
       |> assign(:loading, false)
       |> assign(:streaming_message, "")
+      |> assign(:streaming_events, [])
+      |> assign(:streaming_message_id, nil)
       |> assign(:stream_timeout_ref, nil)
       |> assign(:streaming_pid, nil)
 
@@ -673,16 +706,21 @@ defmodule OllamaChatWeb.ChatLive do
   def handle_info({:tool_result, message_id, tool_name, result}, socket) do
     Logger.info("Tool #{tool_name} completed successfully")
 
-    # Add tool result message
-    tool_result_message = %{
-      id: "#{message_id}-tool-result",
-      role: "tool_result",
-      content: format_tool_result(result),
-      tool_name: tool_name,
-      timestamp: DateTime.utc_now()
-    }
+    # Add to streaming events instead of separate message
+    current_events = socket.assigns.streaming_events
 
-    socket = stream_insert(socket, :messages, tool_result_message)
+    updated_events =
+      current_events ++
+        [
+          %{
+            type: :tool_result,
+            tool_name: tool_name,
+            content: format_tool_result(result),
+            timestamp: DateTime.utc_now()
+          }
+        ]
+
+    socket = assign(socket, :streaming_events, updated_events)
 
     # Continue LLM conversation with tool result
     socket = continue_with_tool_result(socket, message_id, tool_name, result)
@@ -774,6 +812,8 @@ defmodule OllamaChatWeb.ChatLive do
         |> assign(:loading, false)
         |> assign(:streaming_pid, nil)
         |> assign(:streaming_message, "")
+        |> assign(:streaming_events, [])
+        |> assign(:streaming_message_id, nil)
         |> assign(:stream_timeout_ref, nil)
         |> assign(
           :error,
@@ -1338,7 +1378,65 @@ defmodule OllamaChatWeb.ChatLive do
                         </details>
                       </div>
                     <% else %>
-                      <div class="flex justify-start">
+                      <div class="flex justify-start flex-col gap-2">
+                        <%!-- Show collapsible intermediate events while streaming --%>
+                        <%= if message.id == @streaming_message_id and message.streaming and length(@streaming_events) > 1 do %>
+                          <details class="bg-slate-800/50 border border-slate-600 rounded-lg max-w-2xl">
+                            <summary class="px-4 py-2 cursor-pointer hover:bg-slate-700/50 rounded-lg transition-colors flex items-center gap-2 text-sm text-slate-400">
+                              <.icon name="hero-chevron-right" class="w-4 h-4 details-chevron" />
+                              <.icon
+                                name="hero-arrow-path"
+                                class="w-4 h-4 text-slate-400 animate-spin"
+                              />
+                              <span>
+                                Intermediate activity ({length(@streaming_events) - 1} events)
+                              </span>
+                            </summary>
+                            <div class="px-4 py-3 border-t border-slate-600 space-y-3 max-h-96 overflow-y-auto">
+                              <%= for {event, idx} <- Enum.with_index(@streaming_events) do %>
+                                <%= if idx < length(@streaming_events) - 1 do %>
+                                  <%= cond do %>
+                                    <% event.type == :chunk -> %>
+                                      <div class="text-xs text-slate-300 border-l-2 border-slate-600 pl-3 py-1">
+                                        <div class="text-slate-500 mb-1">
+                                          Response update {idx + 1}
+                                        </div>
+                                        <div class="whitespace-pre-wrap break-words">
+                                          {event.content}
+                                        </div>
+                                      </div>
+                                    <% event.type == :tool_call -> %>
+                                      <div class="text-xs border-l-2 border-blue-600 pl-3 py-1">
+                                        <div class="text-blue-400 mb-1 flex items-center gap-1">
+                                          <.icon name="hero-wrench-screwdriver" class="w-3 h-3" />
+                                          Calling tool:
+                                          <span class="font-mono">{event.tool_name}</span>
+                                        </div>
+                                        <%= if event[:args] && map_size(event.args) > 0 do %>
+                                          <pre class="text-xs text-blue-300 bg-slate-900/50 rounded p-1 mt-1">{inspect(event.args, pretty: true, limit: 3)}</pre>
+                                        <% end %>
+                                      </div>
+                                    <% event.type == :tool_result -> %>
+                                      <div class="text-xs border-l-2 border-green-600 pl-3 py-1">
+                                        <div class="text-green-400 mb-1 flex items-center gap-1">
+                                          <.icon name="hero-check-circle" class="w-3 h-3" />
+                                          Tool completed:
+                                          <span class="font-mono">{event.tool_name}</span>
+                                        </div>
+                                        <pre class="text-xs text-green-300 bg-slate-900/50 rounded p-1 mt-1 max-h-20 overflow-y-auto">{String.slice(event.content, 0, 200)}<%= if String.length(event.content) > 200, do: "..." %></pre>
+                                      </div>
+                                    <% true -> %>
+                                      <div class="text-xs text-slate-400 italic">
+                                        Unknown event type
+                                      </div>
+                                  <% end %>
+                                <% end %>
+                              <% end %>
+                            </div>
+                          </details>
+                        <% end %>
+
+                        <%!-- Main streaming/final response --%>
                         <div class="relative">
                           <%= if not message.streaming do %>
                             <button
@@ -1877,6 +1975,8 @@ defmodule OllamaChatWeb.ChatLive do
     |> stream(:messages, [], reset: true)
     |> assign(:messages_empty?, true)
     |> assign(:streaming_message, "")
+    |> assign(:streaming_events, [])
+    |> assign(:streaming_message_id, nil)
     |> assign(:error, nil)
     |> assign(:status_message, nil)
     |> assign(:recovering, false)
@@ -1999,17 +2099,21 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   defp execute_mcp_tool(socket, message_id, tool_name, args) do
-    # Add tool call indicator message
-    tool_call_message = %{
-      id: "#{message_id}-tool-call",
-      role: "tool_call",
-      content: "Calling tool: #{tool_name}",
-      tool_name: tool_name,
-      args: args,
-      timestamp: DateTime.utc_now()
-    }
+    # Add tool call to streaming events instead of separate message
+    current_events = socket.assigns.streaming_events
 
-    socket = stream_insert(socket, :messages, tool_call_message)
+    updated_events =
+      current_events ++
+        [
+          %{
+            type: :tool_call,
+            tool_name: tool_name,
+            args: args,
+            timestamp: DateTime.utc_now()
+          }
+        ]
+
+    socket = assign(socket, :streaming_events, updated_events)
 
     # Execute tool in background
     parent = self()
@@ -2119,6 +2223,8 @@ defmodule OllamaChatWeb.ChatLive do
     socket =
       socket
       |> assign(:streaming_message, "")
+      |> assign(:streaming_events, socket.assigns.streaming_events)
+      |> assign(:streaming_message_id, continuation_message_id)
       |> assign(:loading, true)
       |> assign(:streaming_pid, pid)
 
