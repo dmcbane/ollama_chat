@@ -1395,8 +1395,19 @@ defmodule OllamaChatWeb.ChatLive do
                 <%= cond do %>
                   <% message.role == "user" -> %>
                     <div class="flex justify-end">
-                      <div class="text-white bg-slate-700/50 border border-slate-600 px-4 py-3 max-w-[80%]">
+                      <div class="text-white bg-slate-700/50 border border-slate-600 px-4 py-3 max-w-[80%] relative">
                         <p class="whitespace-pre-wrap break-words">{message.content}</p>
+                        <button
+                          type="button"
+                          class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Copy message"
+                        >
+                          <.icon
+                            name="hero-clipboard-document"
+                            class="w-4 h-4 copy-icon"
+                          />
+                          <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                        </button>
                       </div>
                     </div>
                   <% message.role == "tool_error" -> %>
