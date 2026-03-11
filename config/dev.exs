@@ -89,10 +89,8 @@ config :ollama_chat, :mcp_servers, [
     name: :filesystem,
     display_name: "File System (Dev)",
     description: "Read and write files in test workspace",
-    # command: "npx",
-    command: "./mcp_test_server/start.sh",
-    # args: ["-y", "@modelcontextprotocol/server-filesystem", Path.expand("./tmp/mcp_workspace")],
-    args: [],
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", Path.expand("./tmp/mcp_workspace")],
     enabled: true,
     # Auto-approve in dev for faster testing
     requires_approval: false,
@@ -105,6 +103,17 @@ config :ollama_chat, :mcp_servers, [
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-everything"],
     enabled: true,
+    requires_approval: false
+  },
+  %{
+    name: :elixir_test,
+    display_name: "Elixir Test Server",
+    command: "elixir",
+    args: ["-S", "mix", "run", "--no-halt"],
+    working_dir: Path.expand("../mcp_test_server"),
+    env: %{
+      "MCP_WORKSPACE" => Path.expand("~/mcp_workspace")
+    },
     requires_approval: false
   }
 ]
