@@ -7,6 +7,29 @@ defmodule OllamaChat.Application do
 
   @impl true
   def start(_type, _args) do
+    port = Application.get_env(:ollama_chat, OllamaChatWeb.Endpoint)[:http][:port] || 4000
+
+    case check_port_available(port) do
+      :ok ->
+        :ok
+
+      {:error, :eaddrinuse} ->
+        message = """
+
+        \e[31m[error] Could not start server: port #{port} is already in use.\e[0m
+
+        Another instance of Ollama Chat (or another application) is already
+        listening on port #{port}. To fix this, either:
+
+          1. Stop the other process using port #{port}
+          2. Set a different port: OLLAMA_CHAT_PORT=4001 mix phx.server
+
+        """
+
+        IO.puts(message)
+        System.halt(1)
+    end
+
     children = [
       OllamaChatWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:ollama_chat, :dns_cluster_query) || :ignore},
@@ -32,5 +55,29 @@ defmodule OllamaChat.Application do
   def config_change(changed, _new, removed) do
     OllamaChatWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  defp check_port_available(port) do
+    ip = get_listen_ip()
+
+    case :gen_tcp.listen(port, [:binary, ip: ip, reuseaddr: false]) do
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        :ok
+
+      {:error, :eaddrinuse} ->
+        {:error, :eaddrinuse}
+
+      {:error, _other} ->
+        # Don't block startup for other errors (permissions, etc.)
+        # Let Bandit surface those naturally
+        :ok
+    end
+  end
+
+  defp get_listen_ip do
+    endpoint_config = Application.get_env(:ollama_chat, OllamaChatWeb.Endpoint, [])
+    http_config = Keyword.get(endpoint_config, :http, [])
+    Keyword.get(http_config, :ip, {127, 0, 0, 1})
   end
 end

@@ -89,8 +89,10 @@ config :ollama_chat, :mcp_servers, [
     name: :filesystem,
     display_name: "File System (Dev)",
     description: "Read and write files in test workspace",
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", Path.expand("./tmp/mcp_workspace")],
+    # command: "npx",
+    command: "./mcp_test_server/start.sh",
+    # args: ["-y", "@modelcontextprotocol/server-filesystem", Path.expand("./tmp/mcp_workspace")],
+    args: [],
     enabled: true,
     # Auto-approve in dev for faster testing
     requires_approval: false,
@@ -102,7 +104,7 @@ config :ollama_chat, :mcp_servers, [
     description: "Demo MCP server with various test tools",
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-everything"],
-    enabled: false,
+    enabled: true,
     requires_approval: false
   }
 ]
