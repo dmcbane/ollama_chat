@@ -107,7 +107,9 @@ config :ollama_chat, :mcp_servers, [
   },
   %{
     name: :elixir_test,
-    display_name: "Elixir Test Server",
+    display_name: "Elixir MCP Server (No Node.js Required)",
+    description:
+      "Full-featured MCP server: filesystem operations, memory store, utilities - 19 tools total",
     command: Path.join([__DIR__, "..", "mcp_test_server", "start_clean.sh"]) |> Path.expand(),
     args: [],
     working_dir: Path.join([__DIR__, "..", "mcp_test_server"]) |> Path.expand(),
@@ -115,6 +117,14 @@ config :ollama_chat, :mcp_servers, [
       "MCP_WORKSPACE" => Path.expand("~/mcp_workspace")
     },
     enabled: true,
-    requires_approval: false
+    requires_approval: false,
+    dangerous_tools: [
+      "write_file",
+      "create_directory",
+      "move_file",
+      "copy_file",
+      "delete_file",
+      "delete_directory"
+    ]
   }
 ]

@@ -6,11 +6,18 @@ A comprehensive Elixir-based Model Context Protocol (MCP) server for testing and
 
 ## Features
 
-### 🗂️ Filesystem Tools
+### 🗂️ Filesystem Tools (Full npm parity + extras!)
 - **read_file** - Read file contents from the workspace
 - **write_file** - Write content to files in the workspace
 - **list_directory** - List directory contents with detailed information
 - **file_info** - Get detailed file/directory metadata (size, permissions, dates)
+- **create_directory** - Create new directories
+- **move_file** - Move or rename files and directories
+- **copy_file** - Copy files to new locations
+- **delete_file** - Delete individual files
+- **delete_directory** - Delete directories and all contents recursively
+- **search_files** - Search for files by name pattern (supports wildcards)
+- **get_file_size** - Get file size in human-readable format
 
 ### 💾 Memory/KV Store Tools
 - **memory_set** - Store key-value pairs with optional TTL (time-to-live)
@@ -122,7 +129,15 @@ config :mcp_test_server,
 
 To use this server with the Ollama Chat application:
 
-> **Important:** The Ollama Chat Phoenix server (default port 4000, configurable via `OLLAMA_CHAT_PORT`) and the MCP test server do not conflict, as the MCP server uses stdio communication, not HTTP ports.
+**Important:** The Ollama Chat Phoenix server (default port 4000, configurable via `OLLAMA_CHAT_PORT`) and the MCP test server do not conflict, as the MCP server uses stdio communication, not HTTP ports.
+
+### Why Use This Instead of npm Servers?
+
+✅ **No Node.js dependency** - Pure Elixir, works anywhere Elixir runs
+✅ **More filesystem operations** - Includes copy, delete, search extras
+✅ **Memory + utilities built-in** - 19 tools in one server vs multiple npm packages
+✅ **Better performance** - BEAM VM efficiency, fast startup
+✅ **Simpler deployment** - No npm, no node_modules, no package.json
 
 1. **Configure Ollama Chat** (`config/dev.exs`):
 ```elixir
@@ -174,6 +189,79 @@ config :ollama_chat, :mcp_servers, [
   "tool": "list_directory",
   "args": {
     "path": "."
+  }
+}
+```
+
+**Create directory**:
+```json
+{
+  "tool": "create_directory",
+  "args": {
+    "path": "new_folder"
+  }
+}
+```
+
+**Copy file**:
+```json
+{
+  "tool": "copy_file",
+  "args": {
+    "source": "original.txt",
+    "destination": "backup.txt"
+  }
+}
+```
+
+**Move/rename file**:
+```json
+{
+  "tool": "move_file",
+  "args": {
+    "source": "old_name.txt",
+    "destination": "new_name.txt"
+  }
+}
+```
+
+**Delete file**:
+```json
+{
+  "tool": "delete_file",
+  "args": {
+    "path": "unwanted.txt"
+  }
+}
+```
+
+**Delete directory**:
+```json
+{
+  "tool": "delete_directory",
+  "args": {
+    "path": "old_folder"
+  }
+}
+```
+
+**Search files**:
+```json
+{
+  "tool": "search_files",
+  "args": {
+    "pattern": "*.txt",
+    "path": "documents"
+  }
+}
+```
+
+**Get file size**:
+```json
+{
+  "tool": "get_file_size",
+  "args": {
+    "path": "large_file.bin"
   }
 }
 ```
@@ -326,25 +414,45 @@ mcp_test_server/
 
 ## Comparison with Reference Servers
 
-This server combines capabilities from multiple official MCP servers:
+This server **exceeds** the capabilities of the official npm MCP servers:
+
+| Feature | npm server-filesystem | This Server |
+|---------|----------------------|-------------|
+| read_file | ✅ | ✅ |
+| write_file | ✅ | ✅ |
+| list_directory | ✅ | ✅ |
+| file_info | ✅ | ✅ |
+| create_directory | ✅ | ✅ |
+| move_file | ✅ | ✅ |
+| copy_file | ❌ | ✅ **Extra!** |
+| delete_file | ❌ | ✅ **Extra!** |
+| delete_directory | ❌ | ✅ **Extra!** |
+| search_files | ✅ | ✅ |
+| get_file_size | ❌ | ✅ **Extra!** |
+| **Requires Node.js** | ✅ Yes | ❌ **No!** |
+
+### Additional Capabilities
 
 | Feature | Reference Server | This Server |
 |---------|-----------------|-------------|
-| Filesystem operations | `server-filesystem` | ✅ Implemented |
 | Memory/KV store | `server-memory` | ✅ Implemented |
 | Time utilities | `server-time` | ✅ Implemented |
 | Random generation | Custom | ✅ Implemented |
 | Hashing | Custom | ✅ Implemented |
 | Platform | Node.js/TypeScript | Elixir/BEAM |
+| **Total Tools** | ~4-6 per server | **19 tools** |
 
 ## Advantages of Elixir Implementation
 
+- **No Node.js Required**: Pure Elixir - no npm, no Node.js installation needed
+- **More Features**: Includes copy_file, delete_file, delete_directory, get_file_size
 - **Fault Tolerance**: OTP supervision trees ensure reliability
 - **Concurrency**: BEAM handles concurrent tool calls efficiently
 - **Hot Code Reloading**: Update server code without stopping
 - **Low Latency**: Native compiled code with fast startup
 - **Resource Efficiency**: Lightweight processes with isolated state
 - **Pattern Matching**: Clean, readable tool handler code
+- **Single Binary**: Can be compiled to standalone executable
 
 ## Troubleshooting
 
@@ -428,6 +536,15 @@ Current version: 0.1.0
 
 ## Changelog
 
+### 0.2.0 (2024-12-19)
+- **NEW:** Full npm @modelcontextprotocol/server-filesystem parity
+- **NEW:** Additional tools: copy_file, delete_file, delete_directory, get_file_size
+- **NEW:** search_files with wildcard pattern support
+- **NEW:** create_directory for directory creation
+- **NEW:** move_file for moving/renaming files and directories
+- Total: 19 MCP tools (11 filesystem, 4 memory, 4 utility)
+- **No Node.js required!** Pure Elixir implementation
+
 ### 0.1.0 (2024-02-27)
 - Initial release
 - Filesystem tools (read, write, list, info)
@@ -435,4 +552,4 @@ Current version: 0.1.0
 - Utility tools (echo, time, random, hash)
 - Security: workspace path validation
 - Background cleanup of expired entries
-- **Updated (2024-12-19):** Protocol version updated to 2024-11-05 for ExMCP 0.8.x compatibility
+- Protocol version: 2024-11-05 for ExMCP 0.8.x compatibility

@@ -78,7 +78,7 @@ defmodule McpTestServer.Server do
         protocolVersion: "2024-11-05",
         serverInfo: %{
           name: "mcp-test-server",
-          version: "0.1.0"
+          version: "0.2.0"
         },
         capabilities: %{
           tools: %{
@@ -204,6 +204,117 @@ defmodule McpTestServer.Server do
             path: %{
               type: "string",
               description: "Path to the file/directory"
+            }
+          },
+          required: ["path"]
+        }
+      },
+      %{
+        name: "create_directory",
+        description: "Create a new directory in the workspace",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            path: %{
+              type: "string",
+              description: "Path to the directory to create"
+            }
+          },
+          required: ["path"]
+        }
+      },
+      %{
+        name: "move_file",
+        description: "Move or rename a file or directory",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            source: %{
+              type: "string",
+              description: "Source path"
+            },
+            destination: %{
+              type: "string",
+              description: "Destination path"
+            }
+          },
+          required: ["source", "destination"]
+        }
+      },
+      %{
+        name: "copy_file",
+        description: "Copy a file to a new location",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            source: %{
+              type: "string",
+              description: "Source file path"
+            },
+            destination: %{
+              type: "string",
+              description: "Destination file path"
+            }
+          },
+          required: ["source", "destination"]
+        }
+      },
+      %{
+        name: "delete_file",
+        description: "Delete a file from the workspace",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            path: %{
+              type: "string",
+              description: "Path to the file to delete"
+            }
+          },
+          required: ["path"]
+        }
+      },
+      %{
+        name: "delete_directory",
+        description: "Delete a directory and all its contents",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            path: %{
+              type: "string",
+              description: "Path to the directory to delete"
+            }
+          },
+          required: ["path"]
+        }
+      },
+      %{
+        name: "search_files",
+        description: "Search for files by name pattern",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            pattern: %{
+              type: "string",
+              description: "Search pattern (supports wildcards like *.txt)"
+            },
+            path: %{
+              type: "string",
+              description: "Directory to search in (default: workspace root)",
+              default: "."
+            }
+          },
+          required: ["pattern"]
+        }
+      },
+      %{
+        name: "get_file_size",
+        description: "Get the size of a file in bytes",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            path: %{
+              type: "string",
+              description: "Path to the file"
             }
           },
           required: ["path"]
@@ -347,6 +458,13 @@ defmodule McpTestServer.Server do
       "write_file" -> handle_write_file(arguments)
       "list_directory" -> handle_list_directory(arguments)
       "file_info" -> handle_file_info(arguments)
+      "create_directory" -> handle_create_directory(arguments)
+      "move_file" -> handle_move_file(arguments)
+      "copy_file" -> handle_copy_file(arguments)
+      "delete_file" -> handle_delete_file(arguments)
+      "delete_directory" -> handle_delete_directory(arguments)
+      "search_files" -> handle_search_files(arguments)
+      "get_file_size" -> handle_get_file_size(arguments)
       "memory_set" -> handle_memory_set(arguments)
       "memory_get" -> handle_memory_get(arguments)
       "memory_delete" -> handle_memory_delete(arguments)
@@ -502,6 +620,258 @@ defmodule McpTestServer.Server do
             %{
               isError: true,
               content: [%{type: "text", text: "Error getting file info: #{inspect(reason)}"}]
+            }
+        end
+
+      {:error, reason} ->
+        %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  # Tool Handlers - Additional Filesystem Operations
+
+  defp handle_create_directory(%{"path" => path}) do
+    workspace = get_workspace()
+    full_path = Path.join(workspace, path)
+
+    case validate_path(full_path, workspace) do
+      :ok ->
+        case File.mkdir_p(full_path) do
+          :ok ->
+            %{
+              content: [
+                %{
+                  type: "text",
+                  text: "Created directory: #{path}"
+                }
+              ]
+            }
+
+          {:error, reason} ->
+            %{
+              isError: true,
+              content: [%{type: "text", text: "Error creating directory: #{inspect(reason)}"}]
+            }
+        end
+
+      {:error, reason} ->
+        %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  defp handle_move_file(%{"source" => source, "destination" => destination}) do
+    workspace = get_workspace()
+    source_path = Path.join(workspace, source)
+    dest_path = Path.join(workspace, destination)
+
+    with :ok <- validate_path(source_path, workspace),
+         :ok <- validate_path(dest_path, workspace) do
+      # Ensure destination directory exists
+      dest_path |> Path.dirname() |> File.mkdir_p!()
+
+      case File.rename(source_path, dest_path) do
+        :ok ->
+          %{
+            content: [
+              %{
+                type: "text",
+                text: "Moved: #{source} -> #{destination}"
+              }
+            ]
+          }
+
+        {:error, reason} ->
+          %{
+            isError: true,
+            content: [%{type: "text", text: "Error moving file: #{inspect(reason)}"}]
+          }
+      end
+    else
+      {:error, reason} ->
+        %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  defp handle_copy_file(%{"source" => source, "destination" => destination}) do
+    workspace = get_workspace()
+    source_path = Path.join(workspace, source)
+    dest_path = Path.join(workspace, destination)
+
+    with :ok <- validate_path(source_path, workspace),
+         :ok <- validate_path(dest_path, workspace) do
+      # Ensure destination directory exists
+      dest_path |> Path.dirname() |> File.mkdir_p!()
+
+      case File.cp(source_path, dest_path) do
+        :ok ->
+          %{
+            content: [
+              %{
+                type: "text",
+                text: "Copied: #{source} -> #{destination}"
+              }
+            ]
+          }
+
+        {:error, reason} ->
+          %{
+            isError: true,
+            content: [%{type: "text", text: "Error copying file: #{inspect(reason)}"}]
+          }
+      end
+    else
+      {:error, reason} ->
+        %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  defp handle_delete_file(%{"path" => path}) do
+    workspace = get_workspace()
+    full_path = Path.join(workspace, path)
+
+    case validate_path(full_path, workspace) do
+      :ok ->
+        case File.rm(full_path) do
+          :ok ->
+            %{
+              content: [
+                %{
+                  type: "text",
+                  text: "Deleted file: #{path}"
+                }
+              ]
+            }
+
+          {:error, :enoent} ->
+            %{isError: true, content: [%{type: "text", text: "File not found: #{path}"}]}
+
+          {:error, reason} ->
+            %{
+              isError: true,
+              content: [%{type: "text", text: "Error deleting file: #{inspect(reason)}"}]
+            }
+        end
+
+      {:error, reason} ->
+        %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  defp handle_delete_directory(%{"path" => path}) do
+    workspace = get_workspace()
+    full_path = Path.join(workspace, path)
+
+    case validate_path(full_path, workspace) do
+      :ok ->
+        case File.rm_rf(full_path) do
+          {:ok, _files} ->
+            %{
+              content: [
+                %{
+                  type: "text",
+                  text: "Deleted directory: #{path}"
+                }
+              ]
+            }
+
+          {:error, reason, _file} ->
+            %{
+              isError: true,
+              content: [%{type: "text", text: "Error deleting directory: #{inspect(reason)}"}]
+            }
+        end
+
+      {:error, reason} ->
+        %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  defp handle_search_files(%{"pattern" => pattern} = args) do
+    workspace = get_workspace()
+    search_path = Map.get(args, "path", ".")
+    full_path = Path.join(workspace, search_path)
+
+    case validate_path(full_path, workspace) do
+      :ok ->
+        # Convert wildcard pattern to regex
+        regex_pattern =
+          pattern
+          |> String.replace(".", "\\.")
+          |> String.replace("*", ".*")
+          |> String.replace("?", ".")
+          |> then(&("^" <> &1 <> "$"))
+
+        case Regex.compile(regex_pattern) do
+          {:ok, regex} ->
+            matches =
+              full_path
+              |> Path.join("**/*")
+              |> Path.wildcard()
+              |> Enum.filter(fn path ->
+                File.regular?(path) && Regex.match?(regex, Path.basename(path))
+              end)
+              |> Enum.map(fn path ->
+                Path.relative_to(path, workspace)
+              end)
+
+            result_text =
+              if Enum.empty?(matches) do
+                "No files found matching pattern: #{pattern}"
+              else
+                "Found #{length(matches)} file(s):\n" <> Enum.join(matches, "\n")
+              end
+
+            %{
+              content: [
+                %{
+                  type: "text",
+                  text: result_text
+                }
+              ]
+            }
+
+          {:error, reason} ->
+            %{
+              isError: true,
+              content: [%{type: "text", text: "Invalid pattern: #{inspect(reason)}"}]
+            }
+        end
+
+      {:error, reason} ->
+        %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  defp handle_get_file_size(%{"path" => path}) do
+    workspace = get_workspace()
+    full_path = Path.join(workspace, path)
+
+    case validate_path(full_path, workspace) do
+      :ok ->
+        case File.stat(full_path) do
+          {:ok, %{size: size, type: :regular}} ->
+            %{
+              content: [
+                %{
+                  type: "text",
+                  text: "File: #{path}\nSize: #{format_size(size)} (#{size} bytes)"
+                }
+              ]
+            }
+
+          {:ok, %{type: :directory}} ->
+            %{
+              isError: true,
+              content: [%{type: "text", text: "Path is a directory, not a file: #{path}"}]
+            }
+
+          {:error, :enoent} ->
+            %{isError: true, content: [%{type: "text", text: "File not found: #{path}"}]}
+
+          {:error, reason} ->
+            %{
+              isError: true,
+              content: [%{type: "text", text: "Error getting file size: #{inspect(reason)}"}]
             }
         end
 
