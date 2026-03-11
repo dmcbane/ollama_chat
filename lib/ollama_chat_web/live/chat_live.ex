@@ -383,6 +383,12 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("storage_error", %{"message" => message}, socket) do
+    Logger.warning("Storage error: #{message}")
+    {:noreply, put_flash(socket, :error, message)}
+  end
+
+  @impl true
   def handle_event("conversation_saved", %{"conversation_id" => conversation_id}, socket) do
     {:noreply, assign(socket, :current_conversation_id, conversation_id)}
   end
