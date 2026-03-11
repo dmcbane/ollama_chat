@@ -26,7 +26,7 @@ defmodule OllamaChat.OllamaClient do
 
     body = if options == %{}, do: body, else: Map.put(body, :options, options)
 
-    case Req.post(chat_url(), json: body, retry: false) do
+    case Req.post(chat_url(), json: body, retry: false, receive_timeout: 300_000) do
       {:ok, %Req.Response{status: 200, body: response_body}} ->
         {:ok, response_body}
 
@@ -60,6 +60,7 @@ defmodule OllamaChat.OllamaClient do
     case Req.post(chat_url(),
            json: body,
            retry: false,
+           receive_timeout: 300_000,
            into: fn {:data, data}, {req, resp} ->
              # Split by newlines as Ollama sends one JSON object per line
              data

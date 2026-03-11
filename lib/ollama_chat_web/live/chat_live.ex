@@ -37,6 +37,7 @@ defmodule OllamaChatWeb.ChatLive do
       )
       |> assign(:streaming_message, "")
       |> assign(:streaming_events, [])
+      |> assign(:activity_expanded, false)
       |> assign(:streaming_message_id, nil)
       |> assign(:messages_empty?, true)
       |> assign(:form, to_form(%{"message" => ""}))
@@ -124,6 +125,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:stream_timeout_ref, nil)
       |> assign(:streaming_message, "")
       |> assign(:streaming_events, [])
+      |> assign(:activity_expanded, false)
       |> assign(:streaming_message_id, nil)
 
     {:noreply, socket}
@@ -215,7 +217,8 @@ defmodule OllamaChatWeb.ChatLive do
         content: "",
         html_content: nil,
         timestamp: DateTime.utc_now(),
-        streaming: true
+        streaming: true,
+        intermediate_events: []
       }
 
       # Build conversation history
@@ -258,6 +261,7 @@ defmodule OllamaChatWeb.ChatLive do
         |> assign(:status_message, nil)
         |> assign(:streaming_message, "")
         |> assign(:streaming_events, [])
+        |> assign(:activity_expanded, false)
         |> assign(:streaming_message_id, assistant_message_id)
         |> assign(:messages_empty?, false)
         |> assign(:message_history, [user_message | socket.assigns.message_history])
@@ -346,7 +350,8 @@ defmodule OllamaChatWeb.ChatLive do
           content: msg["content"],
           html_content: html_content,
           timestamp: msg["timestamp"],
-          streaming: false
+          streaming: false,
+          intermediate_events: []
         }
 
         stream_insert(acc, :messages, message)
@@ -394,6 +399,11 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_event("toggle_generation_params", _params, socket) do
     {:noreply, assign(socket, :generation_params_open, !socket.assigns.generation_params_open)}
+  end
+
+  @impl true
+  def handle_event("toggle_activity", _params, socket) do
+    {:noreply, assign(socket, :activity_expanded, !socket.assigns.activity_expanded)}
   end
 
   @impl true
@@ -510,7 +520,8 @@ defmodule OllamaChatWeb.ChatLive do
       content: new_content,
       html_content: nil,
       timestamp: DateTime.utc_now(),
-      streaming: true
+      streaming: true,
+      intermediate_events: []
     }
 
     # Reset stream timeout on each chunk
@@ -541,13 +552,20 @@ defmodule OllamaChatWeb.ChatLive do
       "Stream completed for message_id=#{message_id} (#{String.length(raw_content)} chars)"
     )
 
+    # Capture intermediate events (excluding the final chunk) for the collapsible container
+    intermediate =
+      Enum.reject(socket.assigns.streaming_events, fn e ->
+        e == List.last(socket.assigns.streaming_events) and e.type == :chunk
+      end)
+
     final_message = %{
       id: message_id,
       role: "assistant",
       content: raw_content,
       html_content: Markdown.render_to_string(raw_content),
       timestamp: DateTime.utc_now(),
-      streaming: false
+      streaming: false,
+      intermediate_events: intermediate
     }
 
     updated_history = [final_message | socket.assigns.message_history]
@@ -558,6 +576,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:loading, false)
       |> assign(:streaming_message, "")
       |> assign(:streaming_events, [])
+      |> assign(:activity_expanded, false)
       |> assign(:streaming_message_id, nil)
       |> assign(:message_history, updated_history)
       |> assign(:ollama_status, :running)
@@ -592,6 +611,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:loading, false)
       |> assign(:streaming_message, "")
       |> assign(:streaming_events, [])
+      |> assign(:activity_expanded, false)
       |> assign(:streaming_message_id, nil)
       |> assign(:stream_timeout_ref, nil)
       |> assign(:streaming_pid, nil)
@@ -813,6 +833,7 @@ defmodule OllamaChatWeb.ChatLive do
         |> assign(:streaming_pid, nil)
         |> assign(:streaming_message, "")
         |> assign(:streaming_events, [])
+        |> assign(:activity_expanded, false)
         |> assign(:streaming_message_id, nil)
         |> assign(:stream_timeout_ref, nil)
         |> assign(
@@ -1294,171 +1315,115 @@ defmodule OllamaChatWeb.ChatLive do
                 <%= cond do %>
                   <% message.role == "user" -> %>
                     <div class="flex justify-end">
-                      <div class="relative">
-                        <button
-                          type="button"
-                          class="copy-btn absolute -left-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Copy message"
-                        >
-                          <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
-                          <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
-                        </button>
-                        <div class="bg-blue-600 text-white rounded-2xl rounded-tr-sm px-6 py-3 max-w-[80%] shadow-lg">
-                          <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                        </div>
+                      <div class="text-white bg-slate-700/50 border border-slate-600 px-4 py-3 max-w-[80%]">
+                        <p class="whitespace-pre-wrap break-words">{message.content}</p>
                       </div>
-                    </div>
-                  <% message.role == "tool_call" or message.role == "tool_result" -> %>
-                    <div class="flex justify-center my-2">
-                      <details class="bg-slate-800/50 border border-slate-600 rounded-lg max-w-2xl w-full">
-                        <summary class="px-4 py-2 cursor-pointer hover:bg-slate-700/50 rounded-lg transition-colors flex items-center gap-2 text-sm text-slate-400">
-                          <.icon name="hero-chevron-right" class="w-4 h-4 details-chevron" />
-                          <%= if message.role == "tool_call" do %>
-                            <.icon name="hero-wrench-screwdriver" class="w-4 h-4 text-blue-400" />
-                            <span>
-                              Calling tool:
-                              <span class="font-mono text-blue-300">{message.tool_name}</span>
-                            </span>
-                          <% else %>
-                            <.icon name="hero-check-circle" class="w-4 h-4 text-green-400" />
-                            <span>
-                              Tool completed:
-                              <span class="font-mono text-green-300">{message.tool_name}</span>
-                            </span>
-                          <% end %>
-                        </summary>
-                        <div class="px-4 py-3 border-t border-slate-600">
-                          <%= if message.role == "tool_call" do %>
-                            <div class="text-sm text-blue-300 mb-2 font-medium">Tool Arguments:</div>
-                            <%= if Map.get(message, :args) && map_size(message.args) > 0 do %>
-                              <pre class="text-xs text-blue-400 font-mono bg-slate-900/50 rounded p-2 overflow-x-auto">{inspect(message.args, pretty: true)}</pre>
-                            <% else %>
-                              <div class="text-xs text-slate-400 italic">No arguments</div>
-                            <% end %>
-                          <% else %>
-                            <div class="text-sm text-green-300 mb-2 font-medium">Tool Result:</div>
-                            <pre class="text-xs text-green-400 font-mono bg-slate-900/50 rounded p-2 overflow-x-auto whitespace-pre-wrap">{message.content}</pre>
-                          <% end %>
-                        </div>
-                      </details>
                     </div>
                   <% message.role == "tool_error" -> %>
-                    <div class="flex justify-center my-4">
-                      <div class="bg-red-900/50 border border-red-700 rounded-lg px-4 py-3 max-w-md">
-                        <div class="flex items-center gap-3">
-                          <.icon name="hero-x-circle" class="w-5 h-5 text-red-400" />
-                          <div class="flex-1">
-                            <div class="text-sm font-medium text-red-300">
-                              Tool failed: {message.tool_name}
-                            </div>
-                            <div class="text-xs text-red-400 mt-1">
-                              {message.content}
-                            </div>
-                          </div>
+                    <div class="flex justify-start">
+                      <div class="border border-red-700 px-4 py-3 max-w-[80%]">
+                        <div class="flex items-center gap-2">
+                          <span class="text-red-400 text-xs">&#x2716;</span>
+                          <span class="text-sm text-red-300">
+                            Tool failed: {message.tool_name}
+                          </span>
+                        </div>
+                        <div class="text-xs text-red-400 mt-1">
+                          {message.content}
                         </div>
                       </div>
                     </div>
+                  <% empty_response?(message.content) and not message.streaming -> %>
+                    <%!-- Hide empty intermediate responses entirely --%>
+                    <div class="hidden"></div>
                   <% true -> %>
-                    <%= if empty_response?(message.content) and not message.streaming do %>
-                      <div class="flex justify-center my-2">
-                        <details class="bg-slate-800/50 border border-slate-600 rounded-lg max-w-2xl w-full">
-                          <summary class="px-4 py-2 cursor-pointer hover:bg-slate-700/50 rounded-lg transition-colors flex items-center gap-2 text-sm text-slate-400">
-                            <.icon name="hero-chevron-right" class="w-4 h-4 details-chevron" />
-                            <.icon
-                              name="hero-chat-bubble-left-ellipsis"
-                              class="w-4 h-4 text-slate-400"
-                            />
-                            <span>Intermediate response (empty)</span>
-                          </summary>
-                          <div class="px-4 py-3 border-t border-slate-600">
-                            <div class="text-xs text-slate-400 italic">
-                              This response contained only whitespace.
-                            </div>
+                    <div class="flex justify-start flex-col gap-2">
+                      <%!-- Single collapsible intermediate activity container --%>
+                      <%= if has_intermediate_events?(message, @streaming_message_id, @streaming_events) do %>
+                        <div class="border border-slate-600 max-w-[80%]">
+                          <div class="flex items-center gap-2 px-3 py-1">
+                            <span class="text-xs text-slate-400 flex-1">
+                              <%= if message.streaming do %>
+                                {intermediate_event_count(message, @streaming_events)} intermediate events
+                              <% else %>
+                                {length(message.intermediate_events)} intermediate events
+                              <% end %>
+                            </span>
+                            <button
+                              type="button"
+                              phx-click="toggle_activity"
+                              class={[
+                                "px-1.5 py-0.5 rounded text-xs font-bold leading-none",
+                                "text-slate-300 hover:text-white transition-colors"
+                              ]}
+                              title={if @activity_expanded, do: "Collapse", else: "Expand"}
+                            >
+                              <%= if @activity_expanded do %>
+                                &#x25BC;
+                              <% else %>
+                                &#x25B2;
+                              <% end %>
+                            </button>
                           </div>
-                        </details>
-                      </div>
-                    <% else %>
-                      <div class="flex justify-start flex-col gap-2">
-                        <%!-- Show collapsible intermediate events while streaming --%>
-                        <%= if message.id == @streaming_message_id and message.streaming and length(@streaming_events) > 1 do %>
-                          <details class="bg-slate-800/50 border border-slate-600 rounded-lg max-w-2xl">
-                            <summary class="px-4 py-2 cursor-pointer hover:bg-slate-700/50 rounded-lg transition-colors flex items-center gap-2 text-sm text-slate-400">
-                              <.icon name="hero-chevron-right" class="w-4 h-4 details-chevron" />
-                              <.icon
-                                name="hero-arrow-path"
-                                class="w-4 h-4 text-slate-400 animate-spin"
-                              />
-                              <span>
-                                Intermediate activity ({length(@streaming_events) - 1} events)
-                              </span>
-                            </summary>
-                            <div class="px-4 py-3 border-t border-slate-600 space-y-3 max-h-96 overflow-y-auto">
-                              <%= for {event, idx} <- Enum.with_index(@streaming_events) do %>
-                                <%= if idx < length(@streaming_events) - 1 do %>
-                                  <%= cond do %>
-                                    <% event.type == :chunk -> %>
-                                      <div class="text-xs text-slate-300 border-l-2 border-slate-600 pl-3 py-1">
-                                        <div class="text-slate-500 mb-1">
-                                          Response update {idx + 1}
-                                        </div>
-                                        <div class="whitespace-pre-wrap break-words">
-                                          {event.content}
-                                        </div>
+                          <%= if @activity_expanded do %>
+                            <div class="px-3 py-2 border-t border-slate-600 space-y-2 max-h-96 overflow-y-auto">
+                              <%= for event <- intermediate_events_list(message, @streaming_events) do %>
+                                <%= cond do %>
+                                  <% event.type == :chunk -> %>
+                                    <div class="text-xs text-slate-300 border-l border-slate-600 pl-3 py-1">
+                                      <div class="whitespace-pre-wrap break-words">
+                                        {event.content}
                                       </div>
-                                    <% event.type == :tool_call -> %>
-                                      <div class="text-xs border-l-2 border-blue-600 pl-3 py-1">
-                                        <div class="text-blue-400 mb-1 flex items-center gap-1">
-                                          <.icon name="hero-wrench-screwdriver" class="w-3 h-3" />
-                                          Calling tool:
-                                          <span class="font-mono">{event.tool_name}</span>
-                                        </div>
-                                        <%= if event[:args] && map_size(event.args) > 0 do %>
-                                          <pre class="text-xs text-blue-300 bg-slate-900/50 rounded p-1 mt-1">{inspect(event.args, pretty: true, limit: 3)}</pre>
-                                        <% end %>
+                                    </div>
+                                  <% event.type == :tool_call -> %>
+                                    <div class="text-xs border-l border-blue-600 pl-3 py-1">
+                                      <div class="text-blue-400 mb-1">
+                                        Calling tool: <span class="font-mono">{event.tool_name}</span>
                                       </div>
-                                    <% event.type == :tool_result -> %>
-                                      <div class="text-xs border-l-2 border-green-600 pl-3 py-1">
-                                        <div class="text-green-400 mb-1 flex items-center gap-1">
-                                          <.icon name="hero-check-circle" class="w-3 h-3" />
-                                          Tool completed:
-                                          <span class="font-mono">{event.tool_name}</span>
-                                        </div>
-                                        <pre class="text-xs text-green-300 bg-slate-900/50 rounded p-1 mt-1 max-h-20 overflow-y-auto">{String.slice(event.content, 0, 200)}<%= if String.length(event.content) > 200, do: "..." %></pre>
+                                      <%= if event[:args] && map_size(event.args) > 0 do %>
+                                        <pre class="text-xs text-blue-300 bg-slate-900/50 p-1 mt-1">{inspect(event.args, pretty: true, limit: 3)}</pre>
+                                      <% end %>
+                                    </div>
+                                  <% event.type == :tool_result -> %>
+                                    <div class="text-xs border-l border-green-600 pl-3 py-1">
+                                      <div class="text-green-400 mb-1">
+                                        Tool completed:
+                                        <span class="font-mono">{event.tool_name}</span>
                                       </div>
-                                    <% true -> %>
-                                      <div class="text-xs text-slate-400 italic">
-                                        Unknown event type
-                                      </div>
-                                  <% end %>
+                                      <pre class="text-xs text-green-300 bg-slate-900/50 p-1 mt-1 max-h-20 overflow-y-auto">{String.slice(event.content, 0, 200)}<%= if String.length(event.content) > 200, do: "..." %></pre>
+                                    </div>
+                                  <% true -> %>
+                                    <div class="text-xs text-slate-400 italic">
+                                      {event.content}
+                                    </div>
                                 <% end %>
                               <% end %>
                             </div>
-                          </details>
-                        <% end %>
-
-                        <%!-- Main streaming/final response --%>
-                        <div class="relative">
-                          <%= if not message.streaming do %>
-                            <button
-                              type="button"
-                              class="copy-btn absolute -right-9 top-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                              title="Copy message"
-                            >
-                              <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
-                              <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
-                            </button>
                           <% end %>
-                          <div class="bg-slate-700 text-white rounded-2xl rounded-tl-sm px-6 py-3 max-w-[80%] shadow-lg">
-                            <%= if message.streaming do %>
-                              <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                              <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
-                            <% else %>
-                              <div class="prose-chat">{raw(message.html_content)}</div>
-                            <% end %>
-                          </div>
                         </div>
+                      <% end %>
+
+                      <%!-- Main streaming/final response --%>
+                      <div class="text-white border border-slate-600 px-4 py-3 max-w-[80%] relative">
+                        <%= if message.streaming do %>
+                          <p class="whitespace-pre-wrap break-words">{message.content}</p>
+                          <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
+                        <% else %>
+                          <div class="prose-chat">{raw(message.html_content)}</div>
+                          <button
+                            type="button"
+                            class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Copy message"
+                          >
+                            <.icon
+                              name="hero-clipboard-document"
+                              class="w-4 h-4 copy-icon"
+                            />
+                            <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                          </button>
+                        <% end %>
                       </div>
-                    <% end %>
+                    </div>
                 <% end %>
               </div>
             </div>
@@ -1976,6 +1941,7 @@ defmodule OllamaChatWeb.ChatLive do
     |> assign(:messages_empty?, true)
     |> assign(:streaming_message, "")
     |> assign(:streaming_events, [])
+    |> assign(:activity_expanded, false)
     |> assign(:streaming_message_id, nil)
     |> assign(:error, nil)
     |> assign(:status_message, nil)
@@ -2179,7 +2145,8 @@ defmodule OllamaChatWeb.ChatLive do
       content: "",
       html_content: nil,
       timestamp: DateTime.utc_now(),
-      streaming: true
+      streaming: true,
+      intermediate_events: []
     }
 
     socket = stream_insert(socket, :messages, continuation_message)
@@ -2232,7 +2199,8 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   defp empty_response?(content) when is_binary(content) do
-    String.trim(content) == ""
+    trimmed = String.trim(content)
+    trimmed == "" or String.replace(trimmed, "`", "") == ""
   end
 
   defp empty_response?(_), do: false
@@ -2299,6 +2267,38 @@ defmodule OllamaChatWeb.ChatLive do
           }
       end
     end)
+  end
+
+  defp has_intermediate_events?(message, streaming_message_id, streaming_events) do
+    cond do
+      # During streaming: check live streaming events
+      message.id == streaming_message_id and message.streaming ->
+        length(streaming_events) > 1
+
+      # After streaming: check persisted events on the message
+      not message.streaming and is_list(Map.get(message, :intermediate_events)) ->
+        length(message.intermediate_events) > 0
+
+      true ->
+        false
+    end
+  end
+
+  defp intermediate_events_list(message, streaming_events) do
+    if message.streaming do
+      # During streaming: show all events except the last (current) chunk
+      Enum.slice(streaming_events, 0..(length(streaming_events) - 2)//1)
+    else
+      Map.get(message, :intermediate_events, [])
+    end
+  end
+
+  defp intermediate_event_count(message, streaming_events) do
+    if message.streaming do
+      max(length(streaming_events) - 1, 0)
+    else
+      length(Map.get(message, :intermediate_events, []))
+    end
   end
 
   defp build_message_with_attachments(message, []) do
