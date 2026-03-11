@@ -35,10 +35,30 @@ defmodule OllamaChat.Application do
         System.halt(1)
     end
 
+    # Parse Ollama URL for Finch pool configuration
+    ollama_url = Application.get_env(:ollama_chat, :ollama_base_url, "http://localhost:11434")
+    ollama_uri = URI.parse(ollama_url)
+    ollama_scheme = String.to_atom(ollama_uri.scheme || "http")
+    ollama_host = ollama_uri.host || "localhost"
+    ollama_port = ollama_uri.port || 11434
+
+    # Build Finch pools dynamically to support runtime configuration
+    ollama_pool_key = {:default, [scheme: ollama_scheme, host: ollama_host, port: ollama_port]}
+
+    finch_pools =
+      %{default: [size: 50, count: 4]}
+      |> Map.put(ollama_pool_key,
+        size: 100,
+        count: 8,
+        conn_opts: [timeout: 300_000]
+      )
+
     children = [
       OllamaChatWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:ollama_chat, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: OllamaChat.PubSub},
+      # Finch HTTP client with larger pool for Ollama streaming
+      {Finch, name: OllamaChat.Finch, pools: finch_pools},
       # MCP support
       OllamaChat.MCPRegistry,
       OllamaChat.MCPClient,

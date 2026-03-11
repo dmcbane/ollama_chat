@@ -8,6 +8,16 @@ defmodule OllamaChat.OllamaClient do
   @default_base_url "http://localhost:11434"
   @default_model "llama3"
 
+  # Get a configured Req client that uses our Finch pool
+  defp req_client do
+    Req.new(
+      finch: OllamaChat.Finch,
+      retry: false,
+      receive_timeout: 300_000,
+      pool_timeout: 10_000
+    )
+  end
+
   @doc """
   Sends a chat request to Ollama and returns the response.
   """
@@ -26,7 +36,7 @@ defmodule OllamaChat.OllamaClient do
 
     body = if options == %{}, do: body, else: Map.put(body, :options, options)
 
-    case Req.post(chat_url(), json: body, retry: false, receive_timeout: 300_000) do
+    case Req.post(req_client(), url: chat_url(), json: body) do
       {:ok, %Req.Response{status: 200, body: response_body}} ->
         {:ok, response_body}
 
@@ -57,10 +67,9 @@ defmodule OllamaChat.OllamaClient do
 
     body = if options == %{}, do: body, else: Map.put(body, :options, options)
 
-    case Req.post(chat_url(),
+    case Req.post(req_client(),
+           url: chat_url(),
            json: body,
-           retry: false,
-           receive_timeout: 300_000,
            into: fn {:data, data}, {req, resp} ->
              # Split by newlines as Ollama sends one JSON object per line
              data
@@ -100,7 +109,7 @@ defmodule OllamaChat.OllamaClient do
   Checks if Ollama is running by making a request to the API.
   """
   def ollama_running? do
-    case Req.get(tags_url(), retry: false, receive_timeout: 2000) do
+    case Req.get(req_client(), url: tags_url(), receive_timeout: 2000) do
       {:ok, %Req.Response{status: 200}} ->
         true
 
@@ -118,7 +127,7 @@ defmodule OllamaChat.OllamaClient do
   Lists available models from Ollama.
   """
   def list_models do
-    case Req.get(tags_url(), retry: false) do
+    case Req.get(req_client(), url: tags_url()) do
       {:ok, %Req.Response{status: 200, body: %{"models" => models}}} ->
         model_names = Enum.map(models, & &1["name"])
         Logger.info("Loaded #{length(model_names)} models from Ollama")
