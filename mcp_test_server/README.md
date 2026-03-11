@@ -19,6 +19,18 @@ A comprehensive Elixir-based Model Context Protocol (MCP) server for testing and
 - **search_files** - Search for files by name pattern (supports wildcards)
 - **get_file_size** - Get file size in human-readable format
 
+### 🌍 Environment Variable Tools
+- **list_env** - List all environment variables with optional filtering
+- **get_env** - Get the value of a specific environment variable
+
+### 📊 BEAM VM Monitoring Tools
+- **beam_memory** - Get BEAM VM memory usage statistics
+- **beam_processes** - List and sort BEAM processes by memory/reductions/queue
+- **beam_system_info** - Get BEAM VM system information
+- **beam_schedulers** - Get scheduler utilization statistics
+- **beam_applications** - List loaded OTP applications
+- **beam_ets_tables** - List ETS tables with memory usage
+
 ### 💾 Memory/KV Store Tools
 - **memory_set** - Store key-value pairs with optional TTL (time-to-live)
 - **memory_get** - Retrieve stored values by key
@@ -440,12 +452,14 @@ This server **exceeds** the capabilities of the official npm MCP servers:
 | Random generation | Custom | ✅ Implemented |
 | Hashing | Custom | ✅ Implemented |
 | Platform | Node.js/TypeScript | Elixir/BEAM |
-| **Total Tools** | ~4-6 per server | **19 tools** |
+| **Total Tools** | ~4-6 per server | **28 tools** |
 
 ## Advantages of Elixir Implementation
 
 - **No Node.js Required**: Pure Elixir - no npm, no Node.js installation needed
 - **More Features**: Includes copy_file, delete_file, delete_directory, get_file_size
+- **BEAM Monitoring**: Full access to Erlang VM performance metrics and debugging tools
+- **Environment Access**: Query environment variables without shell commands
 - **Fault Tolerance**: OTP supervision trees ensure reliability
 - **Concurrency**: BEAM handles concurrent tool calls efficiently
 - **Hot Code Reloading**: Update server code without stopping
@@ -535,6 +549,19 @@ For issues or questions:
 Current version: 0.1.0
 
 ## Changelog
+
+### 0.3.0 (2024-12-19)
+- **NEW:** Environment variable tools (list_env, get_env)
+- **NEW:** BEAM VM monitoring tools (7 tools total)
+  - beam_memory - Memory usage statistics
+  - beam_processes - Process inspection and sorting
+  - beam_system_info - System configuration details
+  - beam_schedulers - Scheduler utilization metrics
+  - beam_applications - OTP application listing
+  - beam_ets_tables - ETS table inspection
+- Total: 28 MCP tools (11 filesystem, 4 memory, 4 utility, 2 env, 7 BEAM)
+- Performance monitoring capabilities similar to Phoenix LiveDashboard
+- Environment variable inspection without shell access
 
 ### 0.2.0 (2024-12-19)
 - **NEW:** Full npm @modelcontextprotocol/server-filesystem parity
