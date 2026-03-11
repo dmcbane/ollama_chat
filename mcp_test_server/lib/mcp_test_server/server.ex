@@ -6,7 +6,6 @@ defmodule McpTestServer.Server do
   compatible with the Model Context Protocol.
   """
   use GenServer
-  require Logger
 
   # Client API
 
@@ -18,14 +17,9 @@ defmodule McpTestServer.Server do
 
   @impl true
   def init(_) do
-    Logger.info("Starting MCP Test Server...")
-
     # Get workspace path
     workspace = Application.get_env(:mcp_test_server, :workspace_path, "/tmp/mcp_workspace")
     File.mkdir_p!(workspace)
-
-    Logger.info("Workspace: #{workspace}")
-    Logger.info("Starting stdio loop...")
 
     # Start stdio loop in a separate process
     spawn_link(fn -> stdio_loop() end)
@@ -39,11 +33,9 @@ defmodule McpTestServer.Server do
     # Read from stdin
     case IO.read(:stdio, :line) do
       :eof ->
-        Logger.info("EOF received, exiting")
         System.halt(0)
 
-      {:error, reason} ->
-        Logger.error("Error reading stdin: #{inspect(reason)}")
+      {:error, _reason} ->
         stdio_loop()
 
       line when is_binary(line) ->
@@ -63,9 +55,7 @@ defmodule McpTestServer.Server do
         response = process_request(request)
         send_response(response)
 
-      {:error, reason} ->
-        Logger.error("Failed to parse JSON: #{inspect(reason)}")
-
+      {:error, _reason} ->
         error_response = %{
           jsonrpc: "2.0",
           id: nil,
@@ -79,21 +69,29 @@ defmodule McpTestServer.Server do
     end
   end
 
-  defp process_request(%{"method" => "initialize", "id" => id}) do
+  defp process_request(%{"method" => "initialize", "id" => id, "params" => _params}) do
+    # MCP protocol 2024-11-05 or newer
     %{
       jsonrpc: "2.0",
       id: id,
       result: %{
-        protocolVersion: "0.1.0",
+        protocolVersion: "2024-11-05",
         serverInfo: %{
           name: "mcp-test-server",
           version: "0.1.0"
         },
         capabilities: %{
-          tools: %{}
+          tools: %{
+            listChanged: true
+          }
         }
       }
     }
+  end
+
+  # Fallback for initialize without params
+  defp process_request(%{"method" => "initialize", "id" => id}) do
+    process_request(%{"method" => "initialize", "id" => id, "params" => %{}})
   end
 
   defp process_request(%{"method" => "tools/list", "id" => id}) do
@@ -119,9 +117,7 @@ defmodule McpTestServer.Server do
     }
   end
 
-  defp process_request(%{"method" => method, "id" => id}) do
-    Logger.warning("Unknown method: #{method}")
-
+  defp process_request(%{"method" => _method, "id" => id}) do
     %{
       jsonrpc: "2.0",
       id: id,

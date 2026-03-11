@@ -55,6 +55,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:recovery_step, nil)
       |> assign(:mcp_enabled?, MCPClient.enabled?())
       |> assign(:mcp_tools, %{})
+      |> assign(:mcp_server_status, %{})
       |> assign(:pending_approval, nil)
       |> assign(:show_mcp_settings, false)
       |> assign(:streaming_pid, nil)
@@ -70,15 +71,26 @@ defmodule OllamaChatWeb.ChatLive do
 
     socket =
       if connected?(socket) and socket.assigns.mcp_enabled? do
-        case MCPClient.list_tools() do
-          {:ok, tools} ->
-            Logger.info("Loaded #{map_size(tools)} MCP tools")
-            assign(socket, :mcp_tools, tools)
+        # Load tools and server status
+        socket =
+          case MCPClient.list_tools() do
+            {:ok, tools} ->
+              Logger.info("Loaded #{map_size(tools)} MCP tools")
+              assign(socket, :mcp_tools, tools)
 
-          {:error, reason} ->
-            Logger.warning("Failed to load MCP tools: #{inspect(reason)}")
-            socket
-        end
+            {:error, reason} ->
+              Logger.warning("Failed to load MCP tools: #{inspect(reason)}")
+              socket
+          end
+
+        # Get initial server status
+        server_status = MCPClient.server_info()
+        socket = assign(socket, :mcp_server_status, server_status)
+
+        # Schedule periodic MCP status updates
+        Process.send_after(self(), :refresh_mcp_status, 10_000)
+
+        socket
       else
         socket
       end
@@ -808,7 +820,30 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_event("toggle_mcp_settings", _params, socket) do
+    # Refresh status when opening the panel
+    socket =
+      if socket.assigns.mcp_enabled? and not socket.assigns.show_mcp_settings do
+        server_status = MCPClient.server_info()
+        assign(socket, :mcp_server_status, server_status)
+      else
+        socket
+      end
+
     {:noreply, assign(socket, :show_mcp_settings, !socket.assigns.show_mcp_settings)}
+  end
+
+  @impl true
+  def handle_info(:refresh_mcp_status, socket) do
+    if socket.assigns.mcp_enabled? do
+      server_status = MCPClient.server_info()
+
+      # Schedule next update
+      Process.send_after(self(), :refresh_mcp_status, 10_000)
+
+      {:noreply, assign(socket, :mcp_server_status, server_status)}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -1048,10 +1083,49 @@ defmodule OllamaChatWeb.ChatLive do
               </span>
             </button>
             <%= if @show_mcp_settings do %>
-              <div class="mt-2 space-y-2 max-h-96 overflow-y-auto">
+              <div class="mt-2 space-y-3 max-h-96 overflow-y-auto">
+                <%!-- Server Status Section --%>
+                <%= if map_size(@mcp_server_status) > 0 do %>
+                  <div class="px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700">
+                    <div class="text-xs font-medium text-gray-300 mb-2">Server Status</div>
+                    <div class="space-y-1">
+                      <%= for {name, info} <- @mcp_server_status do %>
+                        <div class="flex items-center justify-between text-xs">
+                          <span class="text-gray-400">{info.display_name}</span>
+                          <%= cond do %>
+                            <% info.status == :connected -> %>
+                              <div class="flex items-center gap-1">
+                                <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                                <span class="text-green-400">Connected</span>
+                                <%= if info.restart_count && info.restart_count > 0 do %>
+                                  <span class="text-yellow-400 text-xs ml-1">
+                                    (restarted {info.restart_count}x)
+                                  </span>
+                                <% end %>
+                              </div>
+                            <% info.status == :restarting -> %>
+                              <div class="flex items-center gap-1">
+                                <span class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></span>
+                                <span class="text-yellow-400">Restarting...</span>
+                              </div>
+                            <% true -> %>
+                              <div class="flex items-center gap-1">
+                                <span class="w-2 h-2 bg-red-500 rounded-full"></span>
+                                <span class="text-red-400">Disconnected</span>
+                              </div>
+                          <% end %>
+                        </div>
+                      <% end %>
+                    </div>
+                  </div>
+                <% end %>
+                <%!-- Tools Section --%>
                 <%= if map_size(@mcp_tools) == 0 do %>
                   <p class="text-sm text-gray-400 px-3 py-2">No MCP tools available</p>
                 <% else %>
+                  <div class="px-3 py-1 text-xs font-medium text-gray-300">
+                    Available Tools ({map_size(@mcp_tools)})
+                  </div>
                   <div
                     :for={{name, info} <- @mcp_tools}
                     class="text-xs p-3 bg-slate-800 rounded-lg border border-slate-700"
@@ -1585,7 +1659,7 @@ defmodule OllamaChatWeb.ChatLive do
               <% end %>
 
               <div class="flex gap-3 items-end">
-                <div class="flex-1 max-w-full overflow-auto max-h-[500px]">
+                <div class="flex-1 max-w-full overflow-auto max-h-[500px] relative group">
                   <.input
                     field={@form[:message]}
                     type="textarea"
@@ -1594,8 +1668,21 @@ defmodule OllamaChatWeb.ChatLive do
                     disabled={@loading}
                     rows="4"
                     phx-hook=".PreventEnterSubmit"
-                    class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize-y min-h-[100px] px-4 py-3"
+                    class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize-y min-h-[100px] px-4 py-3 pr-12"
                   />
+                  <%= if @form[:message].value && String.trim(@form[:message].value) != "" do %>
+                    <button
+                      type="button"
+                      id="copy-prompt-btn"
+                      phx-hook=".CopyPrompt"
+                      data-prompt={@form[:message].value}
+                      class="absolute top-2 right-2 p-2 rounded text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all"
+                      title="Copy prompt"
+                    >
+                      <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
+                      <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                    </button>
+                  <% end %>
                 </div>
                 <%!-- File upload button --%>
                 <label
@@ -1707,6 +1794,38 @@ defmodule OllamaChatWeb.ChatLive do
               e.stopPropagation();
             }
           });
+        }
+      }
+    </script>
+
+    <%!-- Copy prompt to clipboard hook --%>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".CopyPrompt">
+      export default {
+        mounted() {
+          this.el.addEventListener("click", () => {
+            const content = this.el.getAttribute("data-prompt");
+            if (!content) return;
+
+            navigator.clipboard.writeText(content).then(() => {
+              const copyIcon = this.el.querySelector(".copy-icon");
+              const checkIcon = this.el.querySelector(".check-icon");
+              if (copyIcon && checkIcon) {
+                copyIcon.classList.add("hidden");
+                checkIcon.classList.remove("hidden");
+                setTimeout(() => {
+                  copyIcon.classList.remove("hidden");
+                  checkIcon.classList.add("hidden");
+                }, 2000);
+              }
+            });
+          });
+        },
+        updated() {
+          // Update data attribute when prompt changes
+          const textarea = document.querySelector("textarea[name='message']");
+          if (textarea) {
+            this.el.setAttribute("data-prompt", textarea.value);
+          }
         }
       }
     </script>

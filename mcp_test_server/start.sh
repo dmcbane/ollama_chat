@@ -66,4 +66,4 @@ echo -e "${BLUE}========================================${NC}"
 echo ""
 
 # Start the server
-exec mix run --no-halt
+elixir -S mix run --no-halt

@@ -136,10 +136,12 @@ mix compile
 **Solution:**
 ```bash
 # Use a different port
-PORT=4001 mix phx.server
+OLLAMA_CHAT_PORT=4001 mix phx.server
 ```
 
 Then visit http://localhost:4001
+
+**Note:** The Phoenix server uses `OLLAMA_CHAT_PORT` (default 4000). The MCP test server uses stdio (no port) and cannot conflict.
 
 ## Next Steps
 

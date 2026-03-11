@@ -5,7 +5,7 @@ defmodule McpTestServer.MemoryStore do
   Provides simple get/set/delete operations with optional TTL support.
   """
   use GenServer
-  require Logger
+
 
   @cleanup_interval 60_000
 
@@ -142,11 +142,8 @@ defmodule McpTestServer.MemoryStore do
       end)
       |> Enum.into(%{})
 
-    removed_count = map_size(state) - map_size(new_state)
-
-    if removed_count > 0 do
-      Logger.debug("Cleaned up #{removed_count} expired entries")
-    end
+    # removed_count = map_size(state) - map_size(new_state)
+    # Cleanup completed silently (no logging for stdio MCP server)
 
     # Schedule next cleanup
     Process.send_after(self(), :cleanup, @cleanup_interval)

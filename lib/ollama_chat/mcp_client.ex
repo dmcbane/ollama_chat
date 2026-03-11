@@ -25,7 +25,8 @@ defmodule OllamaChat.MCPClient do
               tools: %{},
               last_discovery: nil,
               # 5 minutes
-              discovery_interval: 300_000
+              discovery_interval: 300_000,
+              restart_timers: %{}
   end
 
   # Client API
@@ -63,6 +64,14 @@ defmodule OllamaChat.MCPClient do
   end
 
   @doc """
+  Returns detailed server information including restart counts.
+  """
+  @spec server_info() :: map()
+  def server_info do
+    GenServer.call(__MODULE__, :server_info)
+  end
+
+  @doc """
   Forces a rediscovery of tools from all servers.
   """
   @spec refresh_tools() :: :ok
@@ -84,6 +93,8 @@ defmodule OllamaChat.MCPClient do
   def init(_opts) do
     if mcp_enabled?() do
       Logger.info("Starting MCP client manager")
+      # Trap exits so we can handle crashed MCP clients
+      Process.flag(:trap_exit, true)
       send(self(), :start_servers)
       {:ok, %State{}}
     else
@@ -103,12 +114,15 @@ defmodule OllamaChat.MCPClient do
         case start_mcp_server(server_config) do
           {:ok, client_pid} ->
             Logger.info("Started MCP server: #{server_config.display_name}")
+            # Monitor the client process
+            Process.link(client_pid)
 
             Map.put(acc, server_config.name, %{
               pid: client_pid,
               config: server_config,
               status: :connected,
-              last_health_check: DateTime.utc_now()
+              last_health_check: DateTime.utc_now(),
+              restart_count: 0
             })
 
           {:error, reason} ->
@@ -175,18 +189,198 @@ defmodule OllamaChat.MCPClient do
   end
 
   @impl true
+  def handle_call(:server_info, _from, state) do
+    info =
+      state.clients
+      |> Enum.map(fn {name, client_info} ->
+        {name,
+         %{
+           status: client_info.status,
+           display_name: client_info.config.display_name,
+           last_check: client_info.last_health_check,
+           restart_count: client_info.restart_count,
+           pid: inspect(client_info.pid)
+         }}
+      end)
+      |> Enum.into(%{})
+
+    # Add info about servers scheduled for restart
+    restart_info =
+      state.restart_timers
+      |> Enum.map(fn {name, _ref} ->
+        {name, %{status: :restarting}}
+      end)
+      |> Enum.into(%{})
+
+    combined = Map.merge(restart_info, info)
+
+    {:reply, combined, state}
+  end
+
+  @impl true
   def handle_cast(:refresh_tools, state) do
     send(self(), :discover_tools)
     {:noreply, state}
   end
 
+  @impl true
+  def handle_info({:EXIT, pid, reason}, state) do
+    # Find which server crashed
+    case find_server_by_pid(state.clients, pid) do
+      nil ->
+        Logger.warning("Received EXIT from unknown process #{inspect(pid)}: #{inspect(reason)}")
+        {:noreply, state}
+
+      {server_name, client_info} ->
+        # Log detailed crash information
+        reason_str = format_crash_reason(reason)
+
+        Logger.warning(
+          "MCP server crashed: #{client_info.config.display_name} (#{server_name}) - #{reason_str}"
+        )
+
+        # Remove the crashed client
+        new_clients = Map.delete(state.clients, server_name)
+
+        # Schedule restart with exponential backoff
+        restart_count = client_info.restart_count
+        backoff_ms = calculate_backoff(restart_count)
+
+        if restart_count < 10 do
+          Logger.info(
+            "Will restart #{client_info.config.display_name} in #{div(backoff_ms, 1000)}s (attempt #{restart_count + 1}/10)"
+          )
+        else
+          Logger.error(
+            "#{client_info.config.display_name} has crashed #{restart_count} times. Last attempt coming up."
+          )
+        end
+
+        timer_ref = Process.send_after(self(), {:restart_server, server_name}, backoff_ms)
+
+        new_timers = Map.put(state.restart_timers, server_name, timer_ref)
+
+        {:noreply, %{state | clients: new_clients, restart_timers: new_timers}}
+    end
+  end
+
+  @impl true
+  def handle_info({:restart_server, server_name}, state) do
+    # Find the server config in the original list
+    servers = Application.get_env(:ollama_chat, :mcp_servers, [])
+
+    case Enum.find(servers, fn s -> s.name == server_name end) do
+      nil ->
+        Logger.warning("Cannot restart #{server_name}: config not found")
+        {:noreply, state}
+
+      server_config ->
+        # Get the previous restart count if it exists
+        old_client = get_in(state.clients, [server_name])
+        restart_count = if old_client, do: old_client.restart_count + 1, else: 0
+
+        # Don't restart if too many failures
+        if restart_count > 10 do
+          Logger.error(
+            "MCP server #{server_config.display_name} failed too many times (#{restart_count} attempts). Giving up."
+          )
+
+          {:noreply, state}
+        else
+          case start_mcp_server(server_config) do
+            {:ok, client_pid} ->
+              Logger.info(
+                "Restarted MCP server: #{server_config.display_name} (attempt #{restart_count + 1})"
+              )
+
+              Process.link(client_pid)
+
+              new_client = %{
+                pid: client_pid,
+                config: server_config,
+                status: :connected,
+                last_health_check: DateTime.utc_now(),
+                restart_count: restart_count
+              }
+
+              new_clients = Map.put(state.clients, server_name, new_client)
+              new_timers = Map.delete(state.restart_timers, server_name)
+
+              # Rediscover tools after restart
+              send(self(), :discover_tools)
+
+              {:noreply, %{state | clients: new_clients, restart_timers: new_timers}}
+
+            {:error, reason} ->
+              Logger.error(
+                "Failed to restart MCP server #{server_config.display_name}: #{inspect(reason)}"
+              )
+
+              # Schedule another retry
+              backoff_ms = calculate_backoff(restart_count + 1)
+              timer_ref = Process.send_after(self(), {:restart_server, server_name}, backoff_ms)
+
+              new_timers = Map.put(state.restart_timers, server_name, timer_ref)
+
+              {:noreply, %{state | restart_timers: new_timers}}
+          end
+        end
+    end
+  end
+
   # Private Functions
 
   defp start_mcp_server(config) do
-    Client.start_link(
-      transport: :stdio,
-      command: [config.command | config.args]
-    )
+    try do
+      Client.start_link(
+        transport: :stdio,
+        command: [config.command | config.args]
+      )
+    rescue
+      error ->
+        Logger.error("Exception starting MCP server #{config.display_name}: #{inspect(error)}")
+        {:error, error}
+    catch
+      :exit, reason ->
+        Logger.error("Exit starting MCP server #{config.display_name}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp find_server_by_pid(clients, pid) do
+    Enum.find(clients, fn {_name, info} -> info.pid == pid end)
+  end
+
+  defp calculate_backoff(restart_count) do
+    # Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, max 60s
+    base_delay = 1000
+    max_delay = 60_000
+    delay = base_delay * :math.pow(2, restart_count)
+    min(trunc(delay), max_delay)
+  end
+
+  defp format_crash_reason({:transport_connect_failed, msg}) do
+    "Transport connection failed: #{msg}"
+  end
+
+  defp format_crash_reason(:normal) do
+    "Normal shutdown"
+  end
+
+  defp format_crash_reason(:shutdown) do
+    "Shutdown"
+  end
+
+  defp format_crash_reason({:shutdown, reason}) do
+    "Shutdown: #{inspect(reason)}"
+  end
+
+  defp format_crash_reason(reason) when is_binary(reason) do
+    reason
+  end
+
+  defp format_crash_reason(reason) do
+    inspect(reason)
   end
 
   @dialyzer {:nowarn_function, discover_all_tools: 1}
@@ -233,18 +427,32 @@ defmodule OllamaChat.MCPClient do
         {:error, "Tool not found: #{tool_name}"}
 
       tool_info ->
-        client_info = Map.get(state.clients, tool_info.server)
+        case Map.get(state.clients, tool_info.server) do
+          nil ->
+            Logger.error("MCP server #{tool_info.server} not connected for tool #{tool_name}")
+            {:error, "MCP server not available (may be restarting)"}
 
-        Logger.info("Executing tool: #{tool_name} on server: #{tool_info.server}")
+          client_info ->
+            Logger.info("Executing tool: #{tool_name} on server: #{tool_info.server}")
 
-        case Client.call_tool(client_info.pid, tool_name, args) do
-          {:ok, result} ->
-            Logger.debug("Tool #{tool_name} executed successfully")
-            {:ok, result}
+            try do
+              case Client.call_tool(client_info.pid, tool_name, args) do
+                {:ok, result} ->
+                  Logger.debug("Tool #{tool_name} executed successfully")
+                  {:ok, result}
 
-          {:error, reason} ->
-            Logger.error("Tool execution failed for #{tool_name}: #{inspect(reason)}")
-            {:error, reason}
+                {:error, reason} ->
+                  Logger.error("Tool execution failed for #{tool_name}: #{inspect(reason)}")
+                  {:error, reason}
+              end
+            catch
+              :exit, reason ->
+                Logger.error(
+                  "MCP client crashed during tool execution: #{tool_name} - #{inspect(reason)}"
+                )
+
+                {:error, "MCP server crashed during execution"}
+            end
         end
     end
   end

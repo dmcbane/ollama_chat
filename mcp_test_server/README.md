@@ -2,6 +2,8 @@
 
 A comprehensive Elixir-based Model Context Protocol (MCP) server for testing and development. This server implements multiple tool categories similar to the official MCP reference servers, but built entirely on the Elixir/BEAM platform.
 
+> **Note:** This MCP server communicates via **stdio** (standard input/output), not HTTP. It does not use any network ports and cannot conflict with other services like the Ollama Chat Phoenix server (which runs on port 4000 by default).
+
 ## Features
 
 ### 🗂️ Filesystem Tools
@@ -82,6 +84,22 @@ mix run --no-halt
 
 ### Configuration
 
+#### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCP_WORKSPACE` | Workspace directory for filesystem operations | `../tmp/mcp_workspace` |
+
+> **Note:** The MCP test server does not use `OLLAMA_CHAT_PORT` or any HTTP port configuration, as it communicates via stdio transport.
+
+#### Protocol Version
+
+The MCP test server implements **MCP protocol version 2024-11-05**, which is compatible with:
+- ExMCP 0.8.x and newer
+- Official npm MCP servers (2024-11-05 and later)
+
+If you encounter handshake errors like "Failed to parse handshake response: invalid message format", ensure the protocol versions are compatible.
+
 #### Workspace Path
 
 The workspace path can be configured in three ways (in order of precedence):
@@ -104,13 +122,9 @@ config :mcp_test_server,
 
 To use this server with the Ollama Chat application:
 
-1. **Start the MCP Test Server**:
-```bash
-cd mcp_test_server
-./start.sh
-```
+> **Important:** The Ollama Chat Phoenix server (default port 4000, configurable via `OLLAMA_CHAT_PORT`) and the MCP test server do not conflict, as the MCP server uses stdio communication, not HTTP ports.
 
-2. **Configure Ollama Chat** (`config/dev.exs`):
+1. **Configure Ollama Chat** (`config/dev.exs`):
 ```elixir
 config :ollama_chat, :mcp_servers, [
   %{
@@ -127,7 +141,7 @@ config :ollama_chat, :mcp_servers, [
 ]
 ```
 
-3. **Restart Ollama Chat** to load the new server configuration.
+2. **Restart Ollama Chat** to load the new server configuration. The MCP server will be automatically started by Ollama Chat when needed.
 
 ## Tool Examples
 
@@ -358,11 +372,24 @@ chmod 755 /path/to/workspace
 
 ### Connection Issues
 
-**Issue**: Ollama Chat can't connect
-**Solution**: 
+**Issue:** Ollama Chat can't connect
+**Solution:** 
 1. Verify server is running: `ps aux | grep mcp_test_server`
 2. Check working_dir is absolute path in config
 3. Restart Ollama Chat after config changes
+
+### Protocol Handshake Errors
+
+**Issue:** `Failed to parse handshake response: invalid message format`
+**Solution:**
+1. Ensure MCP test server is using protocol version `2024-11-05` or newer
+2. Check that ExMCP library is version 0.8.0 or newer
+3. Verify the server responds with proper JSON-RPC 2.0 format
+4. Test server manually:
+   ```bash
+   echo '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":1}' | elixir -S mix run --no-halt
+   ```
+   Expected response should include `"protocolVersion":"2024-11-05"`
 
 ## Future Enhancements
 
@@ -408,3 +435,4 @@ Current version: 0.1.0
 - Utility tools (echo, time, random, hash)
 - Security: workspace path validation
 - Background cleanup of expired entries
+- **Updated (2024-12-19):** Protocol version updated to 2024-11-05 for ExMCP 0.8.x compatibility

@@ -56,7 +56,24 @@ The application can be configured using the following environment variables:
 | `OLLAMA_BASE_URL` | Base URL for the Ollama API | `http://localhost:11434` |
 | `OLLAMA_DEFAULT_MODEL` | Default LLM model to use | `llama3` |
 | `OLLAMA_START_COMMAND` | Command to start Ollama if not running | None |
-| `PORT` | Port to run the Phoenix server on | `4000` |
+| `OLLAMA_CHAT_PORT` | Port to run the Phoenix server on | `4000` |
+| `MCP_WORKSPACE` | Workspace directory for MCP test server filesystem operations | `~/mcp_workspace` |
+
+### Port Configuration
+
+The Ollama Chat application uses the following ports:
+
+- **Phoenix Server (HTTP):** Port `4000` (default, configurable via `OLLAMA_CHAT_PORT`)
+- **Ollama API:** Port `11434` (default, configurable via `OLLAMA_BASE_URL`)
+- **MCP Test Server:** **No port** - uses stdio (standard input/output) communication
+
+> **Note:** The MCP test server does not use HTTP or network ports. It communicates via stdio, so it cannot conflict with the Phoenix server or any other network services.
+
+To change the Phoenix server port:
+
+```bash
+OLLAMA_CHAT_PORT=4001 mix phx.server
+```
 
 ### Example Configuration
 
@@ -69,7 +86,7 @@ OLLAMA_DEFAULT_MODEL=llama3
 OLLAMA_START_COMMAND="ollama serve"
 
 # Phoenix Configuration
-PORT=4000
+OLLAMA_CHAT_PORT=4000
 ```
 
 Then load it before starting the server:

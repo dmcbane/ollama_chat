@@ -68,6 +68,8 @@ defmodule OllamaChat.Application do
     case :gen_tcp.listen(port, [:binary, ip: ip, reuseaddr: false]) do
       {:ok, socket} ->
         :gen_tcp.close(socket)
+        # Small delay to ensure OS releases the socket
+        Process.sleep(100)
         :ok
 
       {:error, :eaddrinuse} ->

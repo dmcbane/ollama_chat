@@ -108,12 +108,13 @@ config :ollama_chat, :mcp_servers, [
   %{
     name: :elixir_test,
     display_name: "Elixir Test Server",
-    command: "elixir",
-    args: ["-S", "mix", "run", "--no-halt"],
-    working_dir: Path.expand("../mcp_test_server"),
+    command: Path.join([__DIR__, "..", "mcp_test_server", "start_clean.sh"]) |> Path.expand(),
+    args: [],
+    working_dir: Path.join([__DIR__, "..", "mcp_test_server"]) |> Path.expand(),
     env: %{
       "MCP_WORKSPACE" => Path.expand("~/mcp_workspace")
     },
+    enabled: true,
     requires_approval: false
   }
 ]

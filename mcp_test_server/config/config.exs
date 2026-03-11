@@ -5,10 +5,9 @@ import Config
 config :mcp_test_server,
   workspace_path: System.get_env("MCP_WORKSPACE") || Path.expand("../tmp/mcp_workspace", __DIR__)
 
-# Configure logger
-config :logger, :console,
-  format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
+# Disable logger completely for MCP stdio server (only JSON-RPC on stdout/stderr)
+config :logger,
+  level: :none
 
 # Import environment specific config
 import_config "#{config_env()}.exs"

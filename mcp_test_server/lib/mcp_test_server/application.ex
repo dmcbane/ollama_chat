@@ -9,12 +9,8 @@ defmodule McpTestServer.Application do
   """
   use Application
 
-  require Logger
-
   @impl true
   def start(_type, _args) do
-    Logger.info("Starting MCP Test Server...")
-
     children = [
       # Memory store for the KV functionality
       {McpTestServer.MemoryStore, []},
