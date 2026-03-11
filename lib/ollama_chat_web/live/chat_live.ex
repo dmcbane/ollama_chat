@@ -45,6 +45,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:conversations, [])
       |> assign(:current_conversation_id, nil)
       |> assign(:storage_warning, false)
+      |> assign(:storage_error, nil)
       |> assign(:system_prompt, "")
       |> assign(:system_prompt_open, false)
       |> assign(:generation_params, default_generation_params())
@@ -385,7 +386,12 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_event("storage_error", %{"message" => message}, socket) do
     Logger.warning("Storage error: #{message}")
-    {:noreply, put_flash(socket, :error, message)}
+    {:noreply, assign(socket, :storage_error, message)}
+  end
+
+  @impl true
+  def handle_event("dismiss_storage_error", _params, socket) do
+    {:noreply, assign(socket, :storage_error, nil)}
   end
 
   @impl true
@@ -1360,6 +1366,27 @@ defmodule OllamaChatWeb.ChatLive do
                 <p class="font-semibold">Error</p>
                 <p class="text-sm">{@error}</p>
               </div>
+            </div>
+          </div>
+        <% end %>
+
+        <%!-- Storage error display --%>
+        <%= if @storage_error do %>
+          <div class="mb-4 p-4 bg-yellow-900/50 border border-yellow-500 rounded-lg text-yellow-200">
+            <div class="flex items-start gap-2">
+              <.icon name="hero-exclamation-triangle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
+              <div class="flex-1">
+                <p class="font-semibold">Storage Warning</p>
+                <p class="text-sm">{@storage_error}</p>
+              </div>
+              <button
+                type="button"
+                phx-click="dismiss_storage_error"
+                class="text-yellow-300 hover:text-yellow-100 transition-colors"
+                title="Dismiss"
+              >
+                <.icon name="hero-x-mark" class="w-5 h-5" />
+              </button>
             </div>
           </div>
         <% end %>
