@@ -43,15 +43,17 @@ defmodule OllamaChat.Application do
     ollama_port = ollama_uri.port || 11434
 
     # Build Finch pools dynamically to support runtime configuration
-    ollama_pool_key = {:default, [scheme: ollama_scheme, host: ollama_host, port: ollama_port]}
+    # In Finch 0.21.0+, use URL strings as pool keys
+    ollama_pool_url = "#{ollama_scheme}://#{ollama_host}:#{ollama_port}"
 
-    finch_pools =
-      %{default: [size: 50, count: 4]}
-      |> Map.put(ollama_pool_key,
+    finch_pools = %{
+      :default => [size: 50, count: 4],
+      ollama_pool_url => [
         size: 100,
         count: 8,
         conn_opts: [timeout: 300_000]
-      )
+      ]
+    }
 
     children = [
       OllamaChatWeb.Telemetry,

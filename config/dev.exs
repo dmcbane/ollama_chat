@@ -85,17 +85,17 @@ config :swoosh, :api_client, false
 config :ollama_chat, :mcp_enabled, true
 
 config :ollama_chat, :mcp_servers, [
-  %{
-    name: :filesystem,
-    display_name: "File System (Dev)",
-    description: "Read and write files in test workspace",
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", Path.expand("./tmp/mcp_workspace")],
-    enabled: false,
-    # Auto-approve in dev for faster testing
-    requires_approval: false,
-    dangerous_tools: ["write_file", "create_directory", "move_file", "delete_file"]
-  },
+  ## %{
+  ##   name: :filesystem,
+  ##   display_name: "File System (Dev)",
+  ##   description: "Read and write files in test workspace",
+  ##   command: "npx",
+  ##   args: ["-y", "@modelcontextprotocol/server-filesystem", Path.expand("./tmp/mcp_workspace")],
+  ##   enabled: false,
+  ##   # Auto-approve in dev for faster testing
+  ##   requires_approval: false,
+  ##   dangerous_tools: ["write_file", "create_directory", "move_file", "delete_file"]
+  ## },
   %{
     name: :everything,
     display_name: "Everything (Demo)",
@@ -122,7 +122,6 @@ config :ollama_chat, :mcp_servers, [
       "write_file",
       "create_directory",
       "move_file",
-      "copy_file",
       "delete_file",
       "delete_directory"
     ]

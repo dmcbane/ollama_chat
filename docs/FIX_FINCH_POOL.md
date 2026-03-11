@@ -1,6 +1,83 @@
 # Finch Connection Pool Fix
 
-## Problem
+## Finch 0.21.0 Breaking Change (December 2024)
+
+> **Note:** For a complete migration guide, see [FINCH_0.21_MIGRATION.md](./FINCH_0.21_MIGRATION.md)
+
+### Problem
+
+Starting with Finch 0.21.0, the pool configuration API changed, causing this error:
+
+```
+** (ArgumentError) invalid destination: {:default, [scheme: :http, host: "localhost", port: 11434]}
+```
+
+### Root Cause
+
+Finch 0.21.0 changed how pool keys are specified. The old tuple format no longer works:
+
+```elixir
+# ❌ OLD FORMAT (doesn't work in 0.21.0+)
+ollama_pool_key = {:default, [scheme: :http, host: "localhost", port: 11434]}
+
+# ❌ ALSO DOESN'T WORK
+ollama_pool_key = {:http, "localhost", 11434}
+```
+
+### Solution
+
+Use URL strings as pool keys instead:
+
+```elixir
+# ✅ NEW FORMAT (Finch 0.21.0+)
+ollama_pool_url = "http://localhost:11434"
+
+finch_pools = %{
+  :default => [size: 50, count: 4],
+  ollama_pool_url => [
+    size: 100,
+    count: 8,
+    conn_opts: [timeout: 300_000]
+  ]
+}
+```
+
+### Updated Configuration
+
+**File:** `lib/ollama_chat/application.ex`
+
+```elixir
+# Parse Ollama URL for Finch pool configuration
+ollama_url = Application.get_env(:ollama_chat, :ollama_base_url, "http://localhost:11434")
+ollama_uri = URI.parse(ollama_url)
+ollama_scheme = String.to_atom(ollama_uri.scheme || "http")
+ollama_host = ollama_uri.host || "localhost"
+ollama_port = ollama_uri.port || 11434
+
+# Build URL string for pool key (Finch 0.21.0+ format)
+ollama_pool_url = "#{ollama_scheme}://#{ollama_host}:#{ollama_port}"
+
+finch_pools = %{
+  :default => [size: 50, count: 4],
+  ollama_pool_url => [
+    size: 100,
+    count: 8,
+    conn_opts: [timeout: 300_000]
+  ]
+}
+
+children = [
+  # ... other children ...
+  {Finch, name: OllamaChat.Finch, pools: finch_pools},
+  # ... more children ...
+]
+```
+
+This change is **backward compatible** with the way requests are made - only the pool configuration syntax changed.
+
+---
+
+## Original Problem (Connection Pool Exhaustion)
 
 The application was experiencing connection pool exhaustion errors when making streaming requests to the Ollama API:
 
@@ -29,33 +106,7 @@ The application was experiencing connection pool exhaustion errors when making s
 
 ### 1. Added Finch to Supervision Tree
 
-**File:** `lib/ollama_chat/application.ex`
-
-```elixir
-# Parse Ollama URL for Finch pool configuration
-ollama_url = Application.get_env(:ollama_chat, :ollama_base_url, "http://localhost:11434")
-ollama_uri = URI.parse(ollama_url)
-ollama_scheme = String.to_atom(ollama_uri.scheme || "http")
-ollama_host = ollama_uri.host || "localhost"
-ollama_port = ollama_uri.port || 11434
-
-# Build Finch pools dynamically
-ollama_pool_key = {:default, [scheme: ollama_scheme, host: ollama_host, port: ollama_port]}
-
-finch_pools =
-  %{default: [size: 50, count: 4]}
-  |> Map.put(ollama_pool_key,
-    size: 100,
-    count: 8,
-    conn_opts: [timeout: 300_000]
-  )
-
-children = [
-  # ... other children ...
-  {Finch, name: OllamaChat.Finch, pools: finch_pools},
-  # ... more children ...
-]
-```
+See the updated configuration in the "Finch 0.21.0 Breaking Change" section above for the current syntax.
 
 ### 2. Configured Req to Use Our Finch Instance
 
