@@ -21,8 +21,13 @@ defmodule OllamaChat.Application do
         Another instance of Ollama Chat (or another application) is already
         listening on port #{port}. To fix this, either:
 
-          1. Stop the other process using port #{port}
-          2. Set a different port: OLLAMA_CHAT_PORT=4001 mix phx.server
+          1. Stop the other process using port #{port}:
+
+             lsof -ti:#{port} | xargs kill
+
+          2. Set a different port:
+
+             OLLAMA_CHAT_PORT=#{port + 1} mix phx.server
 
         """
 
