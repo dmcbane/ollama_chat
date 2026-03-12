@@ -395,6 +395,40 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("delete_conversation", %{"conversation_id" => conversation_id}, socket) do
+    socket = push_event(socket, "delete_conversation", %{conversation_id: conversation_id})
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("conversation_deleted", %{"conversation_id" => conversation_id}, socket) do
+    socket =
+      if conversation_id == socket.assigns.current_conversation_id do
+        start_new_conversation(socket)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("clear_all_conversations", _params, socket) do
+    socket = push_event(socket, "clear_all_conversations", %{})
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("all_conversations_cleared", _params, socket) do
+    socket =
+      socket
+      |> start_new_conversation()
+      |> assign(:conversations, [])
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("conversation_saved", %{"conversation_id" => conversation_id}, socket) do
     {:noreply, assign(socket, :current_conversation_id, conversation_id)}
   end
@@ -954,45 +988,66 @@ defmodule OllamaChatWeb.ChatLive do
             </div>
           <% end %>
 
-          <%!-- Conversations selector --%>
+          <%!-- Conversations list --%>
           <div class="mb-4" id="conversations-dropdown" phx-hook=".ConversationManager">
             <label class="text-sm text-gray-300 mb-1 block">Conversations</label>
-            <select
-              class="w-full bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              phx-change="load_conversation"
-              name="conversation_id"
-            >
-              <option value="" selected={@current_conversation_id == nil}>
-                <%= if @current_conversation_id == nil do %>
-                  ✓
-                <% end %>
-                New Chat
-              </option>
-              <option
-                :for={conv <- @conversations}
-                value={conv["id"]}
-                selected={conv["id"] == @current_conversation_id}
+            <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+              <%!-- New Chat row --%>
+              <button
+                type="button"
+                phx-click="clear_chat"
+                id="new-chat-btn"
+                class={[
+                  "w-full text-left px-3 py-2.5 flex items-center gap-2 transition-colors text-sm",
+                  if(@current_conversation_id == nil,
+                    do: "bg-blue-900/30 border-l-2 border-blue-500 text-blue-200",
+                    else: "text-gray-300 hover:bg-slate-700 border-l-2 border-transparent"
+                  )
+                ]}
               >
-                <%= if conv["id"] == @current_conversation_id do %>
-                  ✓
-                <% end %>
-                {conv["title"]}
-              </option>
-            </select>
+                <.icon name="hero-plus-circle" class="w-4 h-4 flex-shrink-0" />
+                <span class="truncate">New Chat</span>
+              </button>
+              <%!-- Scrollable conversation list --%>
+              <div class="max-h-64 overflow-y-auto">
+                <div
+                  :for={conv <- @conversations}
+                  class={[
+                    "group flex items-center gap-2 px-3 py-2 transition-colors text-sm border-l-2 cursor-pointer",
+                    if(conv["id"] == @current_conversation_id,
+                      do: "bg-blue-900/30 border-blue-500 text-blue-200",
+                      else: "border-transparent text-gray-300 hover:bg-slate-700"
+                    )
+                  ]}
+                >
+                  <button
+                    type="button"
+                    phx-click="load_conversation"
+                    phx-value-conversation_id={conv["id"]}
+                    class="flex items-center gap-2 flex-1 min-w-0 text-left"
+                    id={"conv-#{conv["id"]}"}
+                  >
+                    <.icon name="hero-chat-bubble-left" class="w-4 h-4 flex-shrink-0" />
+                    <span class="truncate">{conv["title"]}</span>
+                  </button>
+                  <button
+                    type="button"
+                    phx-click="delete_conversation"
+                    phx-value-conversation_id={conv["id"]}
+                    data-confirm="Delete this conversation? This cannot be undone."
+                    class="p-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                    title="Delete conversation"
+                    id={"delete-conv-#{conv["id"]}"}
+                  >
+                    <.icon name="hero-trash" class="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <%!-- Action buttons --%>
           <div class="flex items-center gap-2 mb-4">
-            <button
-              type="button"
-              phx-click="clear_chat"
-              class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2"
-              title="New Chat"
-            >
-              <.icon name="hero-plus-circle" class="w-5 h-5" />
-              <span class="text-sm">New Chat</span>
-            </button>
-
             <%!-- Export dropdown --%>
             <div class="relative" id="export-menu">
               <button
@@ -1040,6 +1095,26 @@ defmodule OllamaChatWeb.ChatLive do
                 </button>
               </div>
             </div>
+
+            <%!-- Clear All button --%>
+            <button
+              type="button"
+              phx-click="clear_all_conversations"
+              data-confirm="Delete ALL conversations? This cannot be undone."
+              disabled={@conversations == []}
+              class={[
+                "px-4 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2",
+                if(@conversations != [],
+                  do: "hover:bg-red-900/50 hover:border-red-700 hover:text-red-200",
+                  else: "opacity-50 cursor-not-allowed"
+                )
+              ]}
+              title="Delete all conversations"
+              id="clear-all-btn"
+            >
+              <.icon name="hero-trash" class="w-5 h-5" />
+              <span class="text-sm">Clear All</span>
+            </button>
           </div>
 
           <%!-- System prompt panel --%>
@@ -1078,235 +1153,240 @@ defmodule OllamaChatWeb.ChatLive do
           </div>
 
           <%!-- MCP Tools panel --%>
-        <%= if @mcp_enabled? do %>
+          <%= if @mcp_enabled? do %>
+            <div class="mb-4">
+              <button
+                type="button"
+                phx-click="toggle_mcp_settings"
+                class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
+              >
+                <.icon
+                  name={if @show_mcp_settings, do: "hero-chevron-down", else: "hero-chevron-right"}
+                  class="w-4 h-4"
+                />
+                <.icon name="hero-wrench-screwdriver" class="w-4 h-4" />
+                <span>MCP Tools</span>
+                <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">
+                  {map_size(@mcp_tools)}
+                </span>
+              </button>
+              <%= if @show_mcp_settings do %>
+                <div class="mt-2 space-y-3 max-h-96 overflow-y-auto">
+                  <%!-- Server Status Section --%>
+                  <%= if map_size(@mcp_server_status) > 0 do %>
+                    <div class="px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700">
+                      <div class="text-xs font-medium text-gray-300 mb-2">Server Status</div>
+                      <div class="space-y-1">
+                        <%= for {name, info} <- @mcp_server_status do %>
+                          <div class="flex items-center justify-between text-xs">
+                            <span class="text-gray-400">{info.display_name}</span>
+                            <%= cond do %>
+                              <% info.status == :connected -> %>
+                                <div class="flex items-center gap-1">
+                                  <span class="w-2 h-2 bg-green-500 rounded-full"></span>
+                                  <span class="text-green-400">Connected</span>
+                                  <%= if info.restart_count && info.restart_count > 0 do %>
+                                    <span class="text-yellow-400 text-xs ml-1">
+                                      (restarted {info.restart_count}x)
+                                    </span>
+                                  <% end %>
+                                </div>
+                              <% info.status == :restarting -> %>
+                                <div class="flex items-center gap-1">
+                                  <span class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse">
+                                  </span>
+                                  <span class="text-yellow-400">Restarting...</span>
+                                </div>
+                              <% true -> %>
+                                <div class="flex items-center gap-1">
+                                  <span class="w-2 h-2 bg-red-500 rounded-full"></span>
+                                  <span class="text-red-400">Disconnected</span>
+                                </div>
+                            <% end %>
+                          </div>
+                        <% end %>
+                      </div>
+                    </div>
+                  <% end %>
+                  <%!-- Tools Section --%>
+                  <%= if map_size(@mcp_tools) == 0 do %>
+                    <p class="text-sm text-gray-400 px-3 py-2">No MCP tools available</p>
+                  <% else %>
+                    <div class="px-3 py-1 text-xs font-medium text-gray-300">
+                      Available Tools ({map_size(@mcp_tools)})
+                    </div>
+                    <div
+                      :for={{name, info} <- @mcp_tools}
+                      class="text-xs p-3 bg-slate-800 rounded-lg border border-slate-700"
+                    >
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="flex-1">
+                          <div class="font-medium text-blue-300 mb-1">{name}</div>
+                          <div class="text-gray-400 text-xs leading-relaxed">{info.description}</div>
+                        </div>
+                        <%= if info.requires_approval do %>
+                          <span class="px-1.5 py-0.5 text-xs bg-yellow-900/50 text-yellow-300 rounded whitespace-nowrap">
+                            Requires approval
+                          </span>
+                        <% end %>
+                      </div>
+                      <div class="mt-2 text-gray-500 text-xs">
+                        Server: <span class="text-gray-400">{info.server}</span>
+                      </div>
+                    </div>
+                  <% end %>
+                </div>
+              <% end %>
+            </div>
+          <% end %>
+
+          <%!-- Generation parameters panel --%>
           <div class="mb-4">
             <button
               type="button"
-              phx-click="toggle_mcp_settings"
+              phx-click="toggle_generation_params"
               class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
+              id="toggle-generation-params"
             >
               <.icon
-                name={if @show_mcp_settings, do: "hero-chevron-down", else: "hero-chevron-right"}
+                name={if @generation_params_open, do: "hero-chevron-down", else: "hero-chevron-right"}
                 class="w-4 h-4"
               />
-              <.icon name="hero-wrench-screwdriver" class="w-4 h-4" />
-              <span>MCP Tools</span>
-              <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">
-                {map_size(@mcp_tools)}
-              </span>
+              <span>Generation Parameters</span>
+              <%= if generation_params_customized?(@generation_params) do %>
+                <span class="px-2 py-0.5 text-xs bg-amber-600 text-white rounded-full">Custom</span>
+              <% end %>
             </button>
-            <%= if @show_mcp_settings do %>
-              <div class="mt-2 space-y-3 max-h-96 overflow-y-auto">
-                <%!-- Server Status Section --%>
-                <%= if map_size(@mcp_server_status) > 0 do %>
-                  <div class="px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700">
-                    <div class="text-xs font-medium text-gray-300 mb-2">Server Status</div>
-                    <div class="space-y-1">
-                      <%= for {name, info} <- @mcp_server_status do %>
-                        <div class="flex items-center justify-between text-xs">
-                          <span class="text-gray-400">{info.display_name}</span>
-                          <%= cond do %>
-                            <% info.status == :connected -> %>
-                              <div class="flex items-center gap-1">
-                                <span class="w-2 h-2 bg-green-500 rounded-full"></span>
-                                <span class="text-green-400">Connected</span>
-                                <%= if info.restart_count && info.restart_count > 0 do %>
-                                  <span class="text-yellow-400 text-xs ml-1">
-                                    (restarted {info.restart_count}x)
-                                  </span>
-                                <% end %>
-                              </div>
-                            <% info.status == :restarting -> %>
-                              <div class="flex items-center gap-1">
-                                <span class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></span>
-                                <span class="text-yellow-400">Restarting...</span>
-                              </div>
-                            <% true -> %>
-                              <div class="flex items-center gap-1">
-                                <span class="w-2 h-2 bg-red-500 rounded-full"></span>
-                                <span class="text-red-400">Disconnected</span>
-                              </div>
-                          <% end %>
-                        </div>
-                      <% end %>
-                    </div>
-                  </div>
-                <% end %>
-                <%!-- Tools Section --%>
-                <%= if map_size(@mcp_tools) == 0 do %>
-                  <p class="text-sm text-gray-400 px-3 py-2">No MCP tools available</p>
-                <% else %>
-                  <div class="px-3 py-1 text-xs font-medium text-gray-300">
-                    Available Tools ({map_size(@mcp_tools)})
-                  </div>
-                  <div
-                    :for={{name, info} <- @mcp_tools}
-                    class="text-xs p-3 bg-slate-800 rounded-lg border border-slate-700"
-                  >
-                    <div class="flex items-start justify-between gap-2">
-                      <div class="flex-1">
-                        <div class="font-medium text-blue-300 mb-1">{name}</div>
-                        <div class="text-gray-400 text-xs leading-relaxed">{info.description}</div>
-                      </div>
-                      <%= if info.requires_approval do %>
-                        <span class="px-1.5 py-0.5 text-xs bg-yellow-900/50 text-yellow-300 rounded whitespace-nowrap">
-                          Requires approval
+            <%= if @generation_params_open do %>
+              <div
+                class="mt-2 bg-slate-800/50 border border-slate-700 rounded-lg p-4"
+                id="generation-params-panel"
+              >
+                <.form
+                  for={to_form(@generation_params)}
+                  id="generation-params-form"
+                  phx-change="update_generation_params"
+                >
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <%!-- Temperature --%>
+                    <div>
+                      <label class="text-sm text-gray-300 flex justify-between mb-1">
+                        <span>Temperature</span>
+                        <span class="text-blue-400 font-mono">
+                          {@generation_params["temperature"]}
                         </span>
-                      <% end %>
+                      </label>
+                      <input
+                        type="range"
+                        name="temperature"
+                        min="0"
+                        max="2"
+                        step="0.1"
+                        value={@generation_params["temperature"]}
+                        class="w-full accent-blue-500"
+                      />
+                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                        <span>Precise</span>
+                        <span>Creative</span>
+                      </div>
                     </div>
-                    <div class="mt-2 text-gray-500 text-xs">
-                      Server: <span class="text-gray-400">{info.server}</span>
+                    <%!-- Max Tokens (num_predict) --%>
+                    <div>
+                      <label class="text-sm text-gray-300 flex justify-between mb-1">
+                        <span>Max Tokens</span>
+                        <span class="text-blue-400 font-mono">
+                          {@generation_params["num_predict"]}
+                        </span>
+                      </label>
+                      <input
+                        type="range"
+                        name="num_predict"
+                        min="64"
+                        max="8192"
+                        step="64"
+                        value={@generation_params["num_predict"]}
+                        class="w-full accent-blue-500"
+                      />
+                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                        <span>64</span>
+                        <span>8192</span>
+                      </div>
+                    </div>
+                    <%!-- Top P --%>
+                    <div>
+                      <label class="text-sm text-gray-300 flex justify-between mb-1">
+                        <span>Top P</span>
+                        <span class="text-blue-400 font-mono">{@generation_params["top_p"]}</span>
+                      </label>
+                      <input
+                        type="range"
+                        name="top_p"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={@generation_params["top_p"]}
+                        class="w-full accent-blue-500"
+                      />
+                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                        <span>Focused</span>
+                        <span>Diverse</span>
+                      </div>
+                    </div>
+                    <%!-- Top K --%>
+                    <div>
+                      <label class="text-sm text-gray-300 flex justify-between mb-1">
+                        <span>Top K</span>
+                        <span class="text-blue-400 font-mono">{@generation_params["top_k"]}</span>
+                      </label>
+                      <input
+                        type="range"
+                        name="top_k"
+                        min="1"
+                        max="100"
+                        step="1"
+                        value={@generation_params["top_k"]}
+                        class="w-full accent-blue-500"
+                      />
+                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                        <span>1</span>
+                        <span>100</span>
+                      </div>
+                    </div>
+                    <%!-- Context Window (num_ctx) --%>
+                    <div class="md:col-span-2">
+                      <label class="text-sm text-gray-300 flex justify-between mb-1">
+                        <span>Context Window</span>
+                        <span class="text-blue-400 font-mono">{@generation_params["num_ctx"]}</span>
+                      </label>
+                      <input
+                        type="range"
+                        name="num_ctx"
+                        min="512"
+                        max="131072"
+                        step="512"
+                        value={@generation_params["num_ctx"]}
+                        class="w-full accent-blue-500"
+                      />
+                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
+                        <span>512</span>
+                        <span>131072</span>
+                      </div>
                     </div>
                   </div>
-                <% end %>
+                  <div class="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      phx-click="reset_generation_params"
+                      class="text-sm text-gray-400 hover:text-white transition-colors px-3 py-1 rounded border border-slate-600 hover:border-slate-500"
+                      id="reset-generation-params"
+                    >
+                      Reset to Defaults
+                    </button>
+                  </div>
+                </.form>
               </div>
             <% end %>
           </div>
-        <% end %>
-
-        <%!-- Generation parameters panel --%>
-        <div class="mb-4">
-          <button
-            type="button"
-            phx-click="toggle_generation_params"
-            class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
-            id="toggle-generation-params"
-          >
-            <.icon
-              name={if @generation_params_open, do: "hero-chevron-down", else: "hero-chevron-right"}
-              class="w-4 h-4"
-            />
-            <span>Generation Parameters</span>
-            <%= if generation_params_customized?(@generation_params) do %>
-              <span class="px-2 py-0.5 text-xs bg-amber-600 text-white rounded-full">Custom</span>
-            <% end %>
-          </button>
-          <%= if @generation_params_open do %>
-            <div
-              class="mt-2 bg-slate-800/50 border border-slate-700 rounded-lg p-4"
-              id="generation-params-panel"
-            >
-              <.form
-                for={to_form(@generation_params)}
-                id="generation-params-form"
-                phx-change="update_generation_params"
-              >
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <%!-- Temperature --%>
-                  <div>
-                    <label class="text-sm text-gray-300 flex justify-between mb-1">
-                      <span>Temperature</span>
-                      <span class="text-blue-400 font-mono">{@generation_params["temperature"]}</span>
-                    </label>
-                    <input
-                      type="range"
-                      name="temperature"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={@generation_params["temperature"]}
-                      class="w-full accent-blue-500"
-                    />
-                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                      <span>Precise</span>
-                      <span>Creative</span>
-                    </div>
-                  </div>
-                  <%!-- Max Tokens (num_predict) --%>
-                  <div>
-                    <label class="text-sm text-gray-300 flex justify-between mb-1">
-                      <span>Max Tokens</span>
-                      <span class="text-blue-400 font-mono">{@generation_params["num_predict"]}</span>
-                    </label>
-                    <input
-                      type="range"
-                      name="num_predict"
-                      min="64"
-                      max="8192"
-                      step="64"
-                      value={@generation_params["num_predict"]}
-                      class="w-full accent-blue-500"
-                    />
-                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                      <span>64</span>
-                      <span>8192</span>
-                    </div>
-                  </div>
-                  <%!-- Top P --%>
-                  <div>
-                    <label class="text-sm text-gray-300 flex justify-between mb-1">
-                      <span>Top P</span>
-                      <span class="text-blue-400 font-mono">{@generation_params["top_p"]}</span>
-                    </label>
-                    <input
-                      type="range"
-                      name="top_p"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={@generation_params["top_p"]}
-                      class="w-full accent-blue-500"
-                    />
-                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                      <span>Focused</span>
-                      <span>Diverse</span>
-                    </div>
-                  </div>
-                  <%!-- Top K --%>
-                  <div>
-                    <label class="text-sm text-gray-300 flex justify-between mb-1">
-                      <span>Top K</span>
-                      <span class="text-blue-400 font-mono">{@generation_params["top_k"]}</span>
-                    </label>
-                    <input
-                      type="range"
-                      name="top_k"
-                      min="1"
-                      max="100"
-                      step="1"
-                      value={@generation_params["top_k"]}
-                      class="w-full accent-blue-500"
-                    />
-                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                      <span>1</span>
-                      <span>100</span>
-                    </div>
-                  </div>
-                  <%!-- Context Window (num_ctx) --%>
-                  <div class="md:col-span-2">
-                    <label class="text-sm text-gray-300 flex justify-between mb-1">
-                      <span>Context Window</span>
-                      <span class="text-blue-400 font-mono">{@generation_params["num_ctx"]}</span>
-                    </label>
-                    <input
-                      type="range"
-                      name="num_ctx"
-                      min="512"
-                      max="131072"
-                      step="512"
-                      value={@generation_params["num_ctx"]}
-                      class="w-full accent-blue-500"
-                    />
-                    <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                      <span>512</span>
-                      <span>131072</span>
-                    </div>
-                  </div>
-                </div>
-                <div class="mt-3 flex justify-end">
-                  <button
-                    type="button"
-                    phx-click="reset_generation_params"
-                    class="text-sm text-gray-400 hover:text-white transition-colors px-3 py-1 rounded border border-slate-600 hover:border-slate-500"
-                    id="reset-generation-params"
-                  >
-                    Reset to Defaults
-                  </button>
-                </div>
-              </.form>
-            </div>
-          <% end %>
-        </div>
 
           <%!-- Footer info (sidebar) --%>
           <div class="text-center text-sm text-slate-400 mt-6 hidden xl:block">
@@ -1319,230 +1399,126 @@ defmodule OllamaChatWeb.ChatLive do
 
         <%!-- Main content (right column on wide screens) --%>
         <div class="xl:flex-1 xl:min-w-0 flex flex-col xl:max-h-[calc(100vh-4rem)]">
-        <%!-- Status message display --%>
-        <%= if @status_message do %>
-          <div class={[
-            "mb-4 p-4 rounded-lg",
-            if(@recovering,
-              do: "bg-amber-900/50 border border-amber-500 text-amber-200",
-              else: "bg-blue-900/50 border border-blue-500 text-blue-200"
-            )
-          ]}>
-            <div class="flex items-start gap-2">
-              <%= if @recovering do %>
-                <.icon name="hero-arrow-path" class="w-5 h-5 mt-0.5 flex-shrink-0 animate-spin" />
-              <% else %>
-                <.icon name="hero-information-circle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
-              <% end %>
-              <div class="flex-1">
-                <p class="text-sm">{@status_message}</p>
+          <%!-- Status message display --%>
+          <%= if @status_message do %>
+            <div class={[
+              "mb-4 p-4 rounded-lg",
+              if(@recovering,
+                do: "bg-amber-900/50 border border-amber-500 text-amber-200",
+                else: "bg-blue-900/50 border border-blue-500 text-blue-200"
+              )
+            ]}>
+              <div class="flex items-start gap-2">
                 <%= if @recovering do %>
-                  <div class="mt-2 flex gap-1" id="recovery-progress">
-                    <div class={[
-                      "h-1.5 flex-1 rounded-full transition-all duration-300",
-                      if(@recovery_step in [:starting, :waiting, :loading_models, :success],
-                        do: "bg-amber-400",
-                        else: "bg-amber-900"
-                      )
-                    ]}>
-                    </div>
-                    <div class={[
-                      "h-1.5 flex-1 rounded-full transition-all duration-300",
-                      if(@recovery_step in [:waiting, :loading_models, :success],
-                        do: "bg-amber-400",
-                        else: "bg-amber-900"
-                      )
-                    ]}>
-                    </div>
-                    <div class={[
-                      "h-1.5 flex-1 rounded-full transition-all duration-300",
-                      if(@recovery_step in [:loading_models, :success],
-                        do: "bg-amber-400",
-                        else: "bg-amber-900"
-                      )
-                    ]}>
-                    </div>
-                  </div>
+                  <.icon name="hero-arrow-path" class="w-5 h-5 mt-0.5 flex-shrink-0 animate-spin" />
+                <% else %>
+                  <.icon name="hero-information-circle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
                 <% end %>
+                <div class="flex-1">
+                  <p class="text-sm">{@status_message}</p>
+                  <%= if @recovering do %>
+                    <div class="mt-2 flex gap-1" id="recovery-progress">
+                      <div class={[
+                        "h-1.5 flex-1 rounded-full transition-all duration-300",
+                        if(@recovery_step in [:starting, :waiting, :loading_models, :success],
+                          do: "bg-amber-400",
+                          else: "bg-amber-900"
+                        )
+                      ]}>
+                      </div>
+                      <div class={[
+                        "h-1.5 flex-1 rounded-full transition-all duration-300",
+                        if(@recovery_step in [:waiting, :loading_models, :success],
+                          do: "bg-amber-400",
+                          else: "bg-amber-900"
+                        )
+                      ]}>
+                      </div>
+                      <div class={[
+                        "h-1.5 flex-1 rounded-full transition-all duration-300",
+                        if(@recovery_step in [:loading_models, :success],
+                          do: "bg-amber-400",
+                          else: "bg-amber-900"
+                        )
+                      ]}>
+                      </div>
+                    </div>
+                  <% end %>
+                </div>
               </div>
             </div>
-          </div>
-        <% end %>
+          <% end %>
 
-        <%!-- Error display --%>
-        <%= if @error do %>
-          <div class="mb-4 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200">
-            <div class="flex items-start gap-2">
-              <.icon name="hero-exclamation-triangle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
-              <div>
-                <p class="font-semibold">Error</p>
-                <p class="text-sm">{@error}</p>
+          <%!-- Error display --%>
+          <%= if @error do %>
+            <div class="mb-4 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200">
+              <div class="flex items-start gap-2">
+                <.icon name="hero-exclamation-triangle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p class="font-semibold">Error</p>
+                  <p class="text-sm">{@error}</p>
+                </div>
               </div>
             </div>
-          </div>
-        <% end %>
+          <% end %>
 
-        <%!-- Storage error display --%>
-        <%= if @storage_error do %>
-          <div class="mb-4 p-4 bg-yellow-900/50 border border-yellow-500 rounded-lg text-yellow-200">
-            <div class="flex items-start gap-2">
-              <.icon name="hero-exclamation-triangle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
-              <div class="flex-1">
-                <p class="font-semibold">Storage Warning</p>
-                <p class="text-sm">{@storage_error}</p>
+          <%!-- Storage error display --%>
+          <%= if @storage_error do %>
+            <div class="mb-4 p-4 bg-yellow-900/50 border border-yellow-500 rounded-lg text-yellow-200">
+              <div class="flex items-start gap-2">
+                <.icon name="hero-exclamation-triangle" class="w-5 h-5 mt-0.5 flex-shrink-0" />
+                <div class="flex-1">
+                  <p class="font-semibold">Storage Warning</p>
+                  <p class="text-sm">{@storage_error}</p>
+                </div>
+                <button
+                  type="button"
+                  phx-click="dismiss_storage_error"
+                  class="text-yellow-300 hover:text-yellow-100 transition-colors"
+                  title="Dismiss"
+                >
+                  <.icon name="hero-x-mark" class="w-5 h-5" />
+                </button>
               </div>
-              <button
-                type="button"
-                phx-click="dismiss_storage_error"
-                class="text-yellow-300 hover:text-yellow-100 transition-colors"
-                title="Dismiss"
-              >
-                <.icon name="hero-x-mark" class="w-5 h-5" />
-              </button>
             </div>
-          </div>
-        <% end %>
+          <% end %>
 
-        <%!-- Chat messages --%>
-        <div class="bg-slate-800/50 rounded-xl shadow-2xl backdrop-blur-sm border border-slate-700 mb-6 overflow-hidden xl:flex-1 xl:flex xl:flex-col xl:min-h-0">
-          <div
-            id="messages-container"
-            phx-hook=".CopyMessage"
-            class="h-[600px] xl:h-auto xl:flex-1 overflow-y-auto p-6 space-y-4 relative"
-          >
-            <%= if @messages_empty? do %>
-              <div class="text-center py-20 absolute inset-0 flex flex-col items-center justify-center">
-                <.icon
-                  name="hero-chat-bubble-left-right"
-                  class="w-16 h-16 text-slate-600 mx-auto mb-4"
-                />
-                <p class="text-slate-400 text-lg">Start a conversation with your local LLM</p>
-              </div>
-            <% end %>
-
+          <%!-- Chat messages --%>
+          <div class="bg-slate-800/50 rounded-xl shadow-2xl backdrop-blur-sm border border-slate-700 mb-6 overflow-hidden xl:flex-1 xl:flex xl:flex-col xl:min-h-0">
             <div
-              id="messages"
-              phx-update="stream"
-              phx-hook=".ScrollToBottom"
+              id="messages-container"
+              phx-hook=".CopyMessage"
+              class="h-[600px] xl:h-auto xl:flex-1 overflow-y-auto p-6 space-y-4 relative"
             >
-              <div
-                :for={{id, message} <- @streams.messages}
-                id={id}
-                class="animate-fade-in group"
-                data-content={message.content}
-              >
-                <%= cond do %>
-                  <% message.role == "user" -> %>
-                    <div class="flex justify-end">
-                      <div class="text-white bg-slate-700/50 border border-slate-600 px-4 py-3 max-w-[80%] relative">
-                        <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                        <button
-                          type="button"
-                          class="copy-btn absolute top-2 left-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Copy message"
-                        >
-                          <.icon
-                            name="hero-clipboard-document"
-                            class="w-4 h-4 copy-icon"
-                          />
-                          <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
-                        </button>
-                      </div>
-                    </div>
-                  <% message.role == "tool_error" -> %>
-                    <div class="flex justify-start">
-                      <div class="border border-red-700 px-4 py-3 max-w-[80%]">
-                        <div class="flex items-center gap-2">
-                          <span class="text-red-400 text-xs">&#x2716;</span>
-                          <span class="text-sm text-red-300">
-                            Tool failed: {message.tool_name}
-                          </span>
-                        </div>
-                        <div class="text-xs text-red-400 mt-1">
-                          {message.content}
-                        </div>
-                      </div>
-                    </div>
-                  <% empty_response?(message.content) and not message.streaming -> %>
-                    <%!-- Hide empty intermediate responses entirely --%>
-                    <div class="hidden"></div>
-                  <% true -> %>
-                    <div class="flex justify-start flex-col gap-2">
-                      <%!-- Single collapsible intermediate activity container --%>
-                      <%= if has_intermediate_events?(message, @streaming_message_id, @streaming_events) do %>
-                        <div class="border border-slate-600 max-w-[80%]">
-                          <div class="flex items-center gap-2 px-3 py-1">
-                            <span class="text-xs text-slate-400 flex-1">
-                              <%= if message.streaming do %>
-                                {intermediate_event_count(message, @streaming_events)} intermediate events
-                              <% else %>
-                                {length(message.intermediate_events)} intermediate events
-                              <% end %>
-                            </span>
-                            <button
-                              type="button"
-                              phx-click="toggle_activity"
-                              class={[
-                                "px-1.5 py-0.5 rounded text-xs font-bold leading-none",
-                                "text-slate-300 hover:text-white transition-colors"
-                              ]}
-                              title={if @activity_expanded, do: "Collapse", else: "Expand"}
-                            >
-                              <%= if @activity_expanded do %>
-                                &#x25BC;
-                              <% else %>
-                                &#x25B2;
-                              <% end %>
-                            </button>
-                          </div>
-                          <%= if @activity_expanded do %>
-                            <div class="px-3 py-2 border-t border-slate-600 space-y-2 max-h-96 overflow-y-auto">
-                              <%= for event <- intermediate_events_list(message, @streaming_events) do %>
-                                <%= cond do %>
-                                  <% event.type == :chunk -> %>
-                                    <div class="text-xs text-slate-300 border-l border-slate-600 pl-3 py-1">
-                                      <div class="whitespace-pre-wrap break-words">
-                                        {event.content}
-                                      </div>
-                                    </div>
-                                  <% event.type == :tool_call -> %>
-                                    <div class="text-xs border-l border-blue-600 pl-3 py-1">
-                                      <div class="text-blue-400 mb-1">
-                                        Calling tool: <span class="font-mono">{event.tool_name}</span>
-                                      </div>
-                                      <%= if event[:args] && map_size(event.args) > 0 do %>
-                                        <pre class="text-xs text-blue-300 bg-slate-900/50 p-1 mt-1">{inspect(event.args, pretty: true, limit: 3)}</pre>
-                                      <% end %>
-                                    </div>
-                                  <% event.type == :tool_result -> %>
-                                    <div class="text-xs border-l border-green-600 pl-3 py-1">
-                                      <div class="text-green-400 mb-1">
-                                        Tool completed:
-                                        <span class="font-mono">{event.tool_name}</span>
-                                      </div>
-                                      <pre class="text-xs text-green-300 bg-slate-900/50 p-1 mt-1 max-h-20 overflow-y-auto">{String.slice(event.content, 0, 200)}<%= if String.length(event.content) > 200, do: "..." %></pre>
-                                    </div>
-                                  <% true -> %>
-                                    <div class="text-xs text-slate-400 italic">
-                                      {event.content}
-                                    </div>
-                                <% end %>
-                              <% end %>
-                            </div>
-                          <% end %>
-                        </div>
-                      <% end %>
+              <%= if @messages_empty? do %>
+                <div class="text-center py-20 absolute inset-0 flex flex-col items-center justify-center">
+                  <.icon
+                    name="hero-chat-bubble-left-right"
+                    class="w-16 h-16 text-slate-600 mx-auto mb-4"
+                  />
+                  <p class="text-slate-400 text-lg">Start a conversation with your local LLM</p>
+                </div>
+              <% end %>
 
-                      <%!-- Main streaming/final response --%>
-                      <div class="text-white border border-slate-600 px-4 py-3 max-w-[80%] relative">
-                        <%= if message.streaming do %>
+              <div
+                id="messages"
+                phx-update="stream"
+                phx-hook=".ScrollToBottom"
+              >
+                <div
+                  :for={{id, message} <- @streams.messages}
+                  id={id}
+                  class="animate-fade-in group"
+                  data-content={message.content}
+                >
+                  <%= cond do %>
+                    <% message.role == "user" -> %>
+                      <div class="flex justify-end">
+                        <div class="text-white bg-slate-700/50 border border-slate-600 px-4 py-3 max-w-[80%] relative">
                           <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                          <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
-                        <% else %>
-                          <div class="prose-chat">{raw(message.html_content)}</div>
                           <button
                             type="button"
-                            class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            class="copy-btn absolute top-2 left-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
                             title="Copy message"
                           >
                             <.icon
@@ -1551,248 +1527,364 @@ defmodule OllamaChatWeb.ChatLive do
                             />
                             <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
                           </button>
+                        </div>
+                      </div>
+                    <% message.role == "tool_error" -> %>
+                      <div class="flex justify-start">
+                        <div class="border border-red-700 px-4 py-3 max-w-[80%]">
+                          <div class="flex items-center gap-2">
+                            <span class="text-red-400 text-xs">&#x2716;</span>
+                            <span class="text-sm text-red-300">
+                              Tool failed: {message.tool_name}
+                            </span>
+                          </div>
+                          <div class="text-xs text-red-400 mt-1">
+                            {message.content}
+                          </div>
+                        </div>
+                      </div>
+                    <% empty_response?(message.content) and not message.streaming -> %>
+                      <%!-- Hide empty intermediate responses entirely --%>
+                      <div class="hidden"></div>
+                    <% true -> %>
+                      <div class="flex justify-start flex-col gap-2">
+                        <%!-- Single collapsible intermediate activity container --%>
+                        <%= if has_intermediate_events?(message, @streaming_message_id, @streaming_events) do %>
+                          <div class="border border-slate-600 max-w-[80%]">
+                            <div class="flex items-center gap-2 px-3 py-1">
+                              <span class="text-xs text-slate-400 flex-1">
+                                <%= if message.streaming do %>
+                                  {intermediate_event_count(message, @streaming_events)} intermediate events
+                                <% else %>
+                                  {length(message.intermediate_events)} intermediate events
+                                <% end %>
+                              </span>
+                              <button
+                                type="button"
+                                phx-click="toggle_activity"
+                                class={[
+                                  "px-1.5 py-0.5 rounded text-xs font-bold leading-none",
+                                  "text-slate-300 hover:text-white transition-colors"
+                                ]}
+                                title={if @activity_expanded, do: "Collapse", else: "Expand"}
+                              >
+                                <%= if @activity_expanded do %>
+                                  &#x25BC;
+                                <% else %>
+                                  &#x25B2;
+                                <% end %>
+                              </button>
+                            </div>
+                            <%= if @activity_expanded do %>
+                              <div class="px-3 py-2 border-t border-slate-600 space-y-2 max-h-96 overflow-y-auto">
+                                <%= for event <- intermediate_events_list(message, @streaming_events) do %>
+                                  <%= cond do %>
+                                    <% event.type == :chunk -> %>
+                                      <div class="text-xs text-slate-300 border-l border-slate-600 pl-3 py-1">
+                                        <div class="whitespace-pre-wrap break-words">
+                                          {event.content}
+                                        </div>
+                                      </div>
+                                    <% event.type == :tool_call -> %>
+                                      <div class="text-xs border-l border-blue-600 pl-3 py-1">
+                                        <div class="text-blue-400 mb-1">
+                                          Calling tool:
+                                          <span class="font-mono">{event.tool_name}</span>
+                                        </div>
+                                        <%= if event[:args] && map_size(event.args) > 0 do %>
+                                          <pre class="text-xs text-blue-300 bg-slate-900/50 p-1 mt-1">{inspect(event.args, pretty: true, limit: 3)}</pre>
+                                        <% end %>
+                                      </div>
+                                    <% event.type == :tool_result -> %>
+                                      <div class="text-xs border-l border-green-600 pl-3 py-1">
+                                        <div class="text-green-400 mb-1">
+                                          Tool completed:
+                                          <span class="font-mono">{event.tool_name}</span>
+                                        </div>
+                                        <pre class="text-xs text-green-300 bg-slate-900/50 p-1 mt-1 max-h-20 overflow-y-auto">{String.slice(event.content, 0, 200)}<%= if String.length(event.content) > 200, do: "..." %></pre>
+                                      </div>
+                                    <% true -> %>
+                                      <div class="text-xs text-slate-400 italic">
+                                        {event.content}
+                                      </div>
+                                  <% end %>
+                                <% end %>
+                              </div>
+                            <% end %>
+                          </div>
                         <% end %>
+
+                        <%!-- Main streaming/final response --%>
+                        <div class="text-white border border-slate-600 px-4 py-3 max-w-[80%] relative">
+                          <%= if message.streaming do %>
+                            <p class="whitespace-pre-wrap break-words">{message.content}</p>
+                            <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
+                          <% else %>
+                            <div class="prose-chat">{raw(message.html_content)}</div>
+                            <button
+                              type="button"
+                              class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Copy message"
+                            >
+                              <.icon
+                                name="hero-clipboard-document"
+                                class="w-4 h-4 copy-icon"
+                              />
+                              <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                            </button>
+                          <% end %>
+                        </div>
                       </div>
-                    </div>
-                <% end %>
-              </div>
-            </div>
-          </div>
-
-          <%!-- Tool Approval Modal --%>
-          <%= if @pending_approval do %>
-            <div
-              class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-              phx-click="cancel_tool_approval"
-            >
-              <div
-                class="bg-slate-800 border border-slate-700 rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl"
-                phx-click-stop
-              >
-                <div class="flex items-center gap-3 mb-4">
-                  <.icon name="hero-shield-exclamation" class="w-8 h-8 text-yellow-400" />
-                  <h3 class="text-xl font-bold text-white">Tool Approval Required</h3>
-                </div>
-
-                <div class="space-y-3 mb-6">
-                  <div>
-                    <div class="text-sm font-medium text-gray-400">Tool</div>
-                    <div class="text-lg text-white font-mono">{@pending_approval.tool_name}</div>
-                  </div>
-
-                  <div>
-                    <div class="text-sm font-medium text-gray-400">Description</div>
-                    <div class="text-white">{@pending_approval.tool_info.description}</div>
-                  </div>
-
-                  <div>
-                    <div class="text-sm font-medium text-gray-400 mb-1">Arguments</div>
-                    <pre class="text-sm text-gray-300 bg-slate-900 p-3 rounded overflow-x-auto">{Jason.encode!(@pending_approval.args, pretty: true)}</pre>
-                  </div>
-                </div>
-
-                <div class="flex gap-3">
-                  <button
-                    type="button"
-                    phx-click="approve_tool"
-                    class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    phx-click="cancel_tool_approval"
-                    class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors"
-                  >
-                    Deny
-                  </button>
-                </div>
-              </div>
-            </div>
-          <% end %>
-
-          <%!-- Input form --%>
-          <div class="border-t border-slate-700 bg-slate-800/80 p-4">
-            <%!-- Context attachments display --%>
-            <%= if length(@context_attachments) > 0 do %>
-              <div class="mb-3 p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
-                <div class="flex items-center justify-between mb-2">
-                  <div class="text-sm text-blue-300 flex items-center gap-2">
-                    <.icon name="hero-document-duplicate" class="w-4 h-4" />
-                    <span>
-                      Context ({length(@context_attachments)} file{if length(@context_attachments) !=
-                                                                        1,
-                                                                      do: "s"})
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    phx-click="clear_all_context"
-                    class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                  >
-                    Clear All
-                  </button>
-                </div>
-                <div class="space-y-1">
-                  <%= for {attachment, index} <- Enum.with_index(@context_attachments) do %>
-                    <div class="flex items-center gap-2 p-2 bg-blue-900/30 rounded text-xs">
-                      <.icon name="hero-document-text" class="w-4 h-4 text-blue-400 flex-shrink-0" />
-                      <div class="flex-1 min-w-0">
-                        <span class="text-blue-200 truncate">{attachment.name}</span>
-                        <span class="text-blue-400 ml-2">({format_file_size(attachment.size)})</span>
-                      </div>
-                      <button
-                        type="button"
-                        phx-click="remove_context_attachment"
-                        phx-value-index={index}
-                        class="p-1 text-blue-400 hover:text-red-400 transition-colors"
-                      >
-                        <.icon name="hero-x-mark" class="w-3 h-3" />
-                      </button>
-                    </div>
                   <% end %>
                 </div>
-                <div class="mt-2 text-xs text-blue-400">
-                  These files will be included as context in all your messages until removed.
+              </div>
+            </div>
+
+            <%!-- Tool Approval Modal --%>
+            <%= if @pending_approval do %>
+              <div
+                class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+                phx-click="cancel_tool_approval"
+              >
+                <div
+                  class="bg-slate-800 border border-slate-700 rounded-lg p-6 max-w-lg w-full mx-4 shadow-2xl"
+                  phx-click-stop
+                >
+                  <div class="flex items-center gap-3 mb-4">
+                    <.icon name="hero-shield-exclamation" class="w-8 h-8 text-yellow-400" />
+                    <h3 class="text-xl font-bold text-white">Tool Approval Required</h3>
+                  </div>
+
+                  <div class="space-y-3 mb-6">
+                    <div>
+                      <div class="text-sm font-medium text-gray-400">Tool</div>
+                      <div class="text-lg text-white font-mono">{@pending_approval.tool_name}</div>
+                    </div>
+
+                    <div>
+                      <div class="text-sm font-medium text-gray-400">Description</div>
+                      <div class="text-white">{@pending_approval.tool_info.description}</div>
+                    </div>
+
+                    <div>
+                      <div class="text-sm font-medium text-gray-400 mb-1">Arguments</div>
+                      <pre class="text-sm text-gray-300 bg-slate-900 p-3 rounded overflow-x-auto">{Jason.encode!(@pending_approval.args, pretty: true)}</pre>
+                    </div>
+                  </div>
+
+                  <div class="flex gap-3">
+                    <button
+                      type="button"
+                      phx-click="approve_tool"
+                      class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="cancel_tool_approval"
+                      class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors"
+                    >
+                      Deny
+                    </button>
+                  </div>
                 </div>
               </div>
             <% end %>
 
-            <.form for={@form} id="chat-form" phx-submit="send" phx-change="validate">
-              <%!-- File upload area for new attachments --%>
-              <%= if length(@uploads.files.entries) > 0 or length(@attachments) > 0 do %>
-                <div class="mb-3 p-3 bg-slate-900/50 rounded-lg border border-slate-600">
-                  <div class="text-sm text-slate-400 mb-2 flex items-center gap-2">
-                    <.icon name="hero-paper-clip" class="w-4 h-4" />
-                    <span>New Attachments (will be added to context)</span>
-                  </div>
-                  <div class="space-y-2">
-                    <%!-- Show uploaded files --%>
-                    <%= for entry <- @uploads.files.entries do %>
-                      <div class="flex items-center gap-2 p-2 bg-slate-800 rounded">
-                        <.icon name="hero-document-text" class="w-5 h-5 text-blue-400 flex-shrink-0" />
-                        <div class="flex-1 min-w-0">
-                          <div class="text-sm text-white truncate">{entry.client_name}</div>
-                          <div class="text-xs text-slate-400">
-                            {format_file_size(entry.client_size)}
-                            <%= if entry.progress > 0 and entry.progress < 100 do %>
-                              • Uploading {entry.progress}%
-                            <% end %>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          phx-click="cancel_upload"
-                          phx-value-ref={entry.ref}
-                          class="p-1 text-slate-400 hover:text-red-400 transition-colors"
-                        >
-                          <.icon name="hero-x-mark" class="w-4 h-4" />
-                        </button>
-                      </div>
-                    <% end %>
-                    <%!-- Show existing attachments --%>
-                    <%= for attachment <- @attachments do %>
-                      <div class="flex items-center gap-2 p-2 bg-slate-800 rounded">
-                        <.icon name="hero-document-text" class="w-5 h-5 text-green-400 flex-shrink-0" />
-                        <div class="flex-1 min-w-0">
-                          <div class="text-sm text-white truncate">{attachment.name}</div>
-                          <div class="text-xs text-slate-400">
-                            {format_file_size(attachment.size)}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          phx-click="remove_attachment"
-                          phx-value-ref={attachment.ref}
-                          class="p-1 text-slate-400 hover:text-red-400 transition-colors"
-                        >
-                          <.icon name="hero-x-mark" class="w-4 h-4" />
-                        </button>
-                      </div>
-                    <% end %>
-                  </div>
-                </div>
-              <% end %>
-
-              <div class="flex gap-3 items-end">
-                <div class="flex-1 max-w-full overflow-auto max-h-[500px] relative group">
-                  <.input
-                    field={@form[:message]}
-                    type="textarea"
-                    placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
-                    autocomplete="off"
-                    disabled={@loading}
-                    rows="4"
-                    phx-hook=".PreventEnterSubmit"
-                    class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize-y min-h-[100px] px-4 py-3 pr-12"
-                  />
-                  <%= if @form[:message].value && String.trim(@form[:message].value) != "" do %>
+            <%!-- Input form --%>
+            <div class="border-t border-slate-700 bg-slate-800/80 p-4">
+              <%!-- Context attachments display --%>
+              <%= if length(@context_attachments) > 0 do %>
+                <div class="mb-3 p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="text-sm text-blue-300 flex items-center gap-2">
+                      <.icon name="hero-document-duplicate" class="w-4 h-4" />
+                      <span>
+                        Context ({length(@context_attachments)} file{if length(@context_attachments) !=
+                                                                          1,
+                                                                        do: "s"})
+                      </span>
+                    </div>
                     <button
                       type="button"
-                      id="copy-prompt-btn"
-                      phx-hook=".CopyPrompt"
-                      data-prompt={@form[:message].value}
-                      class="absolute top-2 right-2 p-2 rounded text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all"
-                      title="Copy prompt"
+                      phx-click="clear_all_context"
+                      class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
                     >
-                      <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
-                      <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                      Clear All
                     </button>
-                  <% end %>
-                </div>
-                <%!-- File upload button --%>
-                <label
-                  for={@uploads.files.ref}
-                  class="flex items-center justify-center px-4 py-3 rounded-lg font-medium transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-white cursor-pointer flex-shrink-0"
-                >
-                  <.icon name="hero-paper-clip" class="w-5 h-5" />
-                  <.live_file_input upload={@uploads.files} class="hidden" />
-                </label>
-                <%= if @loading do %>
-                  <button
-                    type="button"
-                    phx-click="cancel_stream"
-                    class={[
-                      "px-6 py-3 rounded-lg font-medium transition-all duration-200",
-                      "bg-red-600 hover:bg-red-700 text-white",
-                      "flex items-center gap-2 flex-shrink-0"
-                    ]}
-                  >
-                    <.icon name="hero-x-circle" class="w-5 h-5" />
-                    <span>Cancel</span>
-                  </button>
-                <% else %>
-                  <button
-                    type="submit"
-                    class={[
-                      "px-6 py-3 rounded-lg font-medium transition-all duration-200",
-                      "bg-blue-600 hover:bg-blue-700 text-white",
-                      "flex items-center gap-2 flex-shrink-0"
-                    ]}
-                  >
-                    <.icon name="hero-paper-airplane" class="w-5 h-5" />
-                    <span>Send</span>
-                  </button>
-                <% end %>
-              </div>
-
-              <%!-- Upload errors --%>
-              <%= for err <- upload_errors(@uploads.files) do %>
-                <div class="mt-2 text-sm text-red-400">
-                  {error_to_string(err)}
+                  </div>
+                  <div class="space-y-1">
+                    <%= for {attachment, index} <- Enum.with_index(@context_attachments) do %>
+                      <div class="flex items-center gap-2 p-2 bg-blue-900/30 rounded text-xs">
+                        <.icon name="hero-document-text" class="w-4 h-4 text-blue-400 flex-shrink-0" />
+                        <div class="flex-1 min-w-0">
+                          <span class="text-blue-200 truncate">{attachment.name}</span>
+                          <span class="text-blue-400 ml-2">
+                            ({format_file_size(attachment.size)})
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          phx-click="remove_context_attachment"
+                          phx-value-index={index}
+                          class="p-1 text-blue-400 hover:text-red-400 transition-colors"
+                        >
+                          <.icon name="hero-x-mark" class="w-3 h-3" />
+                        </button>
+                      </div>
+                    <% end %>
+                  </div>
+                  <div class="mt-2 text-xs text-blue-400">
+                    These files will be included as context in all your messages until removed.
+                  </div>
                 </div>
               <% end %>
-            </.form>
-          </div>
-        </div>
 
-        <%!-- Footer info (mobile only, shown below chat on small screens) --%>
-        <div class="text-center text-sm text-slate-400 xl:hidden">
-          <p>
-            Powered by Ollama • Model:
-            <span class="text-blue-400 font-medium">{@selected_model}</span>
-          </p>
-        </div>
+              <.form for={@form} id="chat-form" phx-submit="send" phx-change="validate">
+                <%!-- File upload area for new attachments --%>
+                <%= if length(@uploads.files.entries) > 0 or length(@attachments) > 0 do %>
+                  <div class="mb-3 p-3 bg-slate-900/50 rounded-lg border border-slate-600">
+                    <div class="text-sm text-slate-400 mb-2 flex items-center gap-2">
+                      <.icon name="hero-paper-clip" class="w-4 h-4" />
+                      <span>New Attachments (will be added to context)</span>
+                    </div>
+                    <div class="space-y-2">
+                      <%!-- Show uploaded files --%>
+                      <%= for entry <- @uploads.files.entries do %>
+                        <div class="flex items-center gap-2 p-2 bg-slate-800 rounded">
+                          <.icon
+                            name="hero-document-text"
+                            class="w-5 h-5 text-blue-400 flex-shrink-0"
+                          />
+                          <div class="flex-1 min-w-0">
+                            <div class="text-sm text-white truncate">{entry.client_name}</div>
+                            <div class="text-xs text-slate-400">
+                              {format_file_size(entry.client_size)}
+                              <%= if entry.progress > 0 and entry.progress < 100 do %>
+                                • Uploading {entry.progress}%
+                              <% end %>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            phx-click="cancel_upload"
+                            phx-value-ref={entry.ref}
+                            class="p-1 text-slate-400 hover:text-red-400 transition-colors"
+                          >
+                            <.icon name="hero-x-mark" class="w-4 h-4" />
+                          </button>
+                        </div>
+                      <% end %>
+                      <%!-- Show existing attachments --%>
+                      <%= for attachment <- @attachments do %>
+                        <div class="flex items-center gap-2 p-2 bg-slate-800 rounded">
+                          <.icon
+                            name="hero-document-text"
+                            class="w-5 h-5 text-green-400 flex-shrink-0"
+                          />
+                          <div class="flex-1 min-w-0">
+                            <div class="text-sm text-white truncate">{attachment.name}</div>
+                            <div class="text-xs text-slate-400">
+                              {format_file_size(attachment.size)}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            phx-click="remove_attachment"
+                            phx-value-ref={attachment.ref}
+                            class="p-1 text-slate-400 hover:text-red-400 transition-colors"
+                          >
+                            <.icon name="hero-x-mark" class="w-4 h-4" />
+                          </button>
+                        </div>
+                      <% end %>
+                    </div>
+                  </div>
+                <% end %>
+
+                <div class="flex gap-3 items-end">
+                  <div class="flex-1 max-w-full overflow-auto max-h-[500px] relative group">
+                    <.input
+                      field={@form[:message]}
+                      type="textarea"
+                      placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
+                      autocomplete="off"
+                      disabled={@loading}
+                      rows="4"
+                      phx-hook=".PreventEnterSubmit"
+                      class="w-full bg-slate-900 text-white border-slate-600 focus:border-blue-500 focus:ring-blue-500 resize-y min-h-[100px] px-4 py-3 pr-12"
+                    />
+                    <%= if @form[:message].value && String.trim(@form[:message].value) != "" do %>
+                      <button
+                        type="button"
+                        id="copy-prompt-btn"
+                        phx-hook=".CopyPrompt"
+                        data-prompt={@form[:message].value}
+                        class="absolute top-2 right-2 p-2 rounded text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all"
+                        title="Copy prompt"
+                      >
+                        <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
+                        <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                      </button>
+                    <% end %>
+                  </div>
+                  <div class="flex flex-col gap-2 flex-shrink-0">
+                    <%!-- File upload button --%>
+                    <label
+                      for={@uploads.files.ref}
+                      class="flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-white cursor-pointer"
+                    >
+                      <.icon name="hero-paper-clip" class="w-5 h-5" />
+                      <span>Attach</span>
+                      <.live_file_input upload={@uploads.files} class="hidden" />
+                    </label>
+                    <%= if @loading do %>
+                      <button
+                        type="button"
+                        phx-click="cancel_stream"
+                        class={[
+                          "px-6 py-3 rounded-lg font-medium transition-all duration-200",
+                          "bg-red-600 hover:bg-red-700 text-white",
+                          "flex items-center justify-center gap-2"
+                        ]}
+                      >
+                        <.icon name="hero-x-circle" class="w-5 h-5" />
+                        <span>Cancel</span>
+                      </button>
+                    <% else %>
+                      <button
+                        type="submit"
+                        class={[
+                          "px-6 py-3 rounded-lg font-medium transition-all duration-200",
+                          "bg-blue-600 hover:bg-blue-700 text-white",
+                          "flex items-center justify-center gap-2"
+                        ]}
+                      >
+                        <.icon name="hero-paper-airplane" class="w-5 h-5" />
+                        <span>Send</span>
+                      </button>
+                    <% end %>
+                  </div>
+                </div>
+
+                <%!-- Upload errors --%>
+                <%= for err <- upload_errors(@uploads.files) do %>
+                  <div class="mt-2 text-sm text-red-400">
+                    {error_to_string(err)}
+                  </div>
+                <% end %>
+              </.form>
+            </div>
+          </div>
+
+          <%!-- Footer info (mobile only, shown below chat on small screens) --%>
+          <div class="text-center text-sm text-slate-400 xl:hidden">
+            <p>
+              Powered by Ollama • Model:
+              <span class="text-blue-400 font-medium">{@selected_model}</span>
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -1939,6 +2031,24 @@ defmodule OllamaChatWeb.ChatLive do
               this.pushEvent("conversation_loaded", { conversation: conversation });
             }
           });
+
+          // Listen for delete conversation events
+          this.handleEvent("delete_conversation", (data) => {
+            this.deleteConversation(data.conversation_id);
+            this.loadConversations();
+            this.pushEvent("conversation_deleted", { conversation_id: data.conversation_id });
+          });
+
+          // Listen for clear all conversations events
+          this.handleEvent("clear_all_conversations", () => {
+            try {
+              localStorage.setItem(this.storageKey, JSON.stringify([]));
+            } catch (e) {
+              console.error("Error clearing conversations:", e);
+            }
+            this.loadConversations();
+            this.pushEvent("all_conversations_cleared", {});
+          });
         },
 
         loadConversations() {
@@ -1972,6 +2082,16 @@ defmodule OllamaChatWeb.ChatLive do
         getConversation(id) {
           const conversations = this.getConversations();
           return conversations.find(c => c.id === id);
+        },
+
+        deleteConversation(id) {
+          try {
+            const conversations = this.getConversations().filter(c => c.id !== id);
+            localStorage.setItem(this.storageKey, JSON.stringify(conversations));
+          } catch (e) {
+            console.error("Error deleting conversation:", e);
+            this.pushEvent("storage_error", { message: "Failed to delete conversation." });
+          }
         },
 
         saveConversation(data) {
