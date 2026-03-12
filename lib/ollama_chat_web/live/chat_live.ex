@@ -1398,7 +1398,7 @@ defmodule OllamaChatWeb.ChatLive do
         </div>
 
         <%!-- Main content (right column on wide screens) --%>
-        <div class="xl:flex-1 xl:min-w-0 flex flex-col xl:max-h-[calc(100vh-4rem)]">
+        <div class="xl:flex-1 xl:min-w-0 flex flex-col max-h-[calc(100vh-4rem)]">
           <%!-- Status message display --%>
           <%= if @status_message do %>
             <div class={[
@@ -1484,11 +1484,11 @@ defmodule OllamaChatWeb.ChatLive do
           <% end %>
 
           <%!-- Chat messages --%>
-          <div class="bg-slate-800/50 rounded-xl shadow-2xl backdrop-blur-sm border border-slate-700 mb-6 overflow-hidden xl:flex-1 xl:flex xl:flex-col xl:min-h-0">
+          <div class="bg-slate-800/50 rounded-xl shadow-2xl backdrop-blur-sm border border-slate-700 mb-6 overflow-hidden flex-1 flex flex-col min-h-0">
             <div
               id="messages-container"
-              phx-hook=".CopyMessage"
-              class="h-[600px] xl:h-auto xl:flex-1 overflow-y-auto p-6 space-y-4 relative"
+              phx-hook=".CopyMessage .ScrollToBottom"
+              class="flex-1 overflow-y-auto p-6 space-y-4 relative"
             >
               <%= if @messages_empty? do %>
                 <div class="text-center py-20 absolute inset-0 flex flex-col items-center justify-center">
@@ -1503,7 +1503,6 @@ defmodule OllamaChatWeb.ChatLive do
               <div
                 id="messages"
                 phx-update="stream"
-                phx-hook=".ScrollToBottom"
               >
                 <div
                   :for={{id, message} <- @streams.messages}
@@ -1894,12 +1893,46 @@ defmodule OllamaChatWeb.ChatLive do
       export default {
         mounted() {
           this.scrollToBottom();
+          this.setupObserver();
         },
         updated() {
           this.scrollToBottom();
         },
+        destroyed() {
+          if (this.observer) {
+            this.observer.disconnect();
+          }
+        },
+        setupObserver() {
+          // Find the #messages div that contains the actual message stream
+          const messagesDiv = this.el.querySelector('#messages');
+          if (!messagesDiv) return;
+
+          // Watch for new messages being added to the DOM
+          this.observer = new MutationObserver((mutations) => {
+            // Check if new child elements were added
+            const hasNewNodes = mutations.some(mutation => mutation.addedNodes.length > 0);
+            if (hasNewNodes) {
+              this.scrollToBottom();
+            }
+          });
+
+          // Observe the messages stream div for changes to its children
+          this.observer.observe(messagesDiv, {
+            childList: true,
+            subtree: false
+          });
+        },
         scrollToBottom() {
-          this.el.scrollTop = this.el.scrollHeight;
+          // Only auto-scroll if user is near the bottom (within 100px)
+          const isNearBottom = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 100;
+
+          if (isNearBottom) {
+            // Use requestAnimationFrame for smooth scrolling
+            requestAnimationFrame(() => {
+              this.el.scrollTop = this.el.scrollHeight;
+            });
+          }
         }
       }
     </script>
