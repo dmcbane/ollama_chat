@@ -1483,146 +1483,44 @@ defmodule OllamaChatWeb.ChatLive do
             </div>
           <% end %>
 
-          <%!-- Chat messages --%>
-          <div class="bg-slate-800/50 rounded-xl shadow-2xl backdrop-blur-sm border border-slate-700 mb-6 overflow-hidden flex-1 flex flex-col min-h-0">
-            <div
-              id="messages-container"
-              phx-hook=".CopyMessage .ScrollToBottom"
-              class="flex-1 overflow-y-auto p-6 space-y-4 relative"
-            >
-              <%= if @messages_empty? do %>
-                <div class="text-center py-20 absolute inset-0 flex flex-col items-center justify-center">
-                  <.icon
-                    name="hero-chat-bubble-left-right"
-                    class="w-16 h-16 text-slate-600 mx-auto mb-4"
-                  />
-                  <p class="text-slate-400 text-lg">Start a conversation with your local LLM</p>
-                </div>
-              <% end %>
-
+          <%!-- Chat and input wrapper: Contains both the chat area (messages) and input area (compose) --%>
+          <%!-- Layout: Chat area fills available space (flex-1), input area stays at bottom (flex-shrink-0) --%>
+          <div class="flex-1 flex flex-col min-h-0">
+            <%!-- Chat area: Scrollable message history (user and assistant messages) --%>
+            <div class="bg-slate-800/50 rounded-t-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-b-0 overflow-hidden flex flex-col flex-1 min-h-0">
               <div
-                id="messages"
-                phx-update="stream"
+                id="messages-container"
+                phx-hook=".CopyMessage .ScrollToBottom"
+                class="flex-1 overflow-y-auto p-6 space-y-4 relative min-h-[400px]"
               >
-                <div
-                  :for={{id, message} <- @streams.messages}
-                  id={id}
-                  class="animate-fade-in group"
-                  data-content={message.content}
-                >
-                  <%= cond do %>
-                    <% message.role == "user" -> %>
-                      <div class="flex justify-end">
-                        <div class="text-white bg-slate-700/50 border border-slate-600 px-4 py-3 max-w-[80%] relative">
-                          <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                          <button
-                            type="button"
-                            class="copy-btn absolute top-2 left-2 p-1 rounded text-cyan-400 hover:text-cyan-300 bg-black/30 hover:bg-black/50 opacity-0 group-hover:opacity-100 transition-all z-10"
-                            title="Copy message"
-                          >
-                            <.icon
-                              name="hero-clipboard-document"
-                              class="w-4 h-4 copy-icon"
-                            />
-                            <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
-                          </button>
-                        </div>
-                      </div>
-                    <% message.role == "tool_error" -> %>
-                      <div class="flex justify-start">
-                        <div class="border border-red-700 px-4 py-3 max-w-[80%]">
-                          <div class="flex items-center gap-2">
-                            <span class="text-red-400 text-xs">&#x2716;</span>
-                            <span class="text-sm text-red-300">
-                              Tool failed: {message.tool_name}
-                            </span>
-                          </div>
-                          <div class="text-xs text-red-400 mt-1">
-                            {message.content}
-                          </div>
-                        </div>
-                      </div>
-                    <% empty_response?(message.content) and not message.streaming -> %>
-                      <%!-- Hide empty intermediate responses entirely --%>
-                      <div class="hidden"></div>
-                    <% true -> %>
-                      <div class="flex justify-start flex-col gap-2">
-                        <%!-- Single collapsible intermediate activity container --%>
-                        <%= if has_intermediate_events?(message, @streaming_message_id, @streaming_events) do %>
-                          <div class="border border-slate-600 max-w-[80%]">
-                            <div class="flex items-center gap-2 px-3 py-1">
-                              <span class="text-xs text-slate-400 flex-1">
-                                <%= if message.streaming do %>
-                                  {intermediate_event_count(message, @streaming_events)} intermediate events
-                                <% else %>
-                                  {length(message.intermediate_events)} intermediate events
-                                <% end %>
-                              </span>
-                              <button
-                                type="button"
-                                phx-click="toggle_activity"
-                                class={[
-                                  "px-1.5 py-0.5 rounded text-xs font-bold leading-none",
-                                  "text-slate-300 hover:text-white transition-colors"
-                                ]}
-                                title={if @activity_expanded, do: "Collapse", else: "Expand"}
-                              >
-                                <%= if @activity_expanded do %>
-                                  &#x25BC;
-                                <% else %>
-                                  &#x25B2;
-                                <% end %>
-                              </button>
-                            </div>
-                            <%= if @activity_expanded do %>
-                              <div class="px-3 py-2 border-t border-slate-600 space-y-2 max-h-96 overflow-y-auto">
-                                <%= for event <- intermediate_events_list(message, @streaming_events) do %>
-                                  <%= cond do %>
-                                    <% event.type == :chunk -> %>
-                                      <div class="text-xs text-slate-300 border-l border-slate-600 pl-3 py-1">
-                                        <div class="whitespace-pre-wrap break-words">
-                                          {event.content}
-                                        </div>
-                                      </div>
-                                    <% event.type == :tool_call -> %>
-                                      <div class="text-xs border-l border-blue-600 pl-3 py-1">
-                                        <div class="text-blue-400 mb-1">
-                                          Calling tool:
-                                          <span class="font-mono">{event.tool_name}</span>
-                                        </div>
-                                        <%= if event[:args] && map_size(event.args) > 0 do %>
-                                          <pre class="text-xs text-blue-300 bg-slate-900/50 p-1 mt-1">{inspect(event.args, pretty: true, limit: 3)}</pre>
-                                        <% end %>
-                                      </div>
-                                    <% event.type == :tool_result -> %>
-                                      <div class="text-xs border-l border-green-600 pl-3 py-1">
-                                        <div class="text-green-400 mb-1">
-                                          Tool completed:
-                                          <span class="font-mono">{event.tool_name}</span>
-                                        </div>
-                                        <pre class="text-xs text-green-300 bg-slate-900/50 p-1 mt-1 max-h-20 overflow-y-auto">{String.slice(event.content, 0, 200)}<%= if String.length(event.content) > 200, do: "..." %></pre>
-                                      </div>
-                                    <% true -> %>
-                                      <div class="text-xs text-slate-400 italic">
-                                        {event.content}
-                                      </div>
-                                  <% end %>
-                                <% end %>
-                              </div>
-                            <% end %>
-                          </div>
-                        <% end %>
+                <%= if @messages_empty? do %>
+                  <div class="text-center py-20 absolute inset-0 flex flex-col items-center justify-center">
+                    <.icon
+                      name="hero-chat-bubble-left-right"
+                      class="w-16 h-16 text-slate-600 mx-auto mb-4"
+                    />
+                    <p class="text-slate-400 text-lg">Start a conversation with your local LLM</p>
+                  </div>
+                <% end %>
 
-                        <%!-- Main streaming/final response --%>
-                        <div class="text-white border border-slate-600 px-4 py-3 max-w-[80%] relative">
-                          <%= if message.streaming do %>
+                <div
+                  id="messages"
+                  phx-update="stream"
+                >
+                  <div
+                    :for={{id, message} <- @streams.messages}
+                    id={id}
+                    class="animate-fade-in group"
+                    data-content={message.content}
+                  >
+                    <%= cond do %>
+                      <% message.role == "user" -> %>
+                        <div class="flex justify-end">
+                          <div class="text-white bg-slate-700/50 border border-slate-600 px-4 py-3 max-w-[80%] relative">
                             <p class="whitespace-pre-wrap break-words">{message.content}</p>
-                            <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
-                          <% else %>
-                            <div class="prose-chat">{raw(message.html_content)}</div>
                             <button
                               type="button"
-                              class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                              class="copy-btn absolute top-2 left-2 p-1 rounded text-cyan-400 hover:text-cyan-300 bg-black/30 hover:bg-black/50 opacity-0 group-hover:opacity-100 transition-all z-10"
                               title="Copy message"
                             >
                               <.icon
@@ -1631,10 +1529,116 @@ defmodule OllamaChatWeb.ChatLive do
                               />
                               <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
                             </button>
-                          <% end %>
+                          </div>
                         </div>
-                      </div>
-                  <% end %>
+                      <% message.role == "tool_error" -> %>
+                        <div class="flex justify-start">
+                          <div class="border border-red-700 px-4 py-3 max-w-[80%]">
+                            <div class="flex items-center gap-2">
+                              <span class="text-red-400 text-xs">&#x2716;</span>
+                              <span class="text-sm text-red-300">
+                                Tool failed: {message.tool_name}
+                              </span>
+                            </div>
+                            <div class="text-xs text-red-400 mt-1">
+                              {message.content}
+                            </div>
+                          </div>
+                        </div>
+                      <% empty_response?(message.content) and not message.streaming -> %>
+                        <%!-- Hide empty intermediate responses entirely --%>
+                        <div class="hidden"></div>
+                      <% true -> %>
+                        <div class="flex justify-start flex-col gap-2">
+                          <%!-- Single collapsible intermediate activity container --%>
+                          <%= if has_intermediate_events?(message, @streaming_message_id, @streaming_events) do %>
+                            <div class="border border-slate-600 max-w-[80%]">
+                              <div class="flex items-center gap-2 px-3 py-1">
+                                <span class="text-xs text-slate-400 flex-1">
+                                  <%= if message.streaming do %>
+                                    {intermediate_event_count(message, @streaming_events)} intermediate events
+                                  <% else %>
+                                    {length(message.intermediate_events)} intermediate events
+                                  <% end %>
+                                </span>
+                                <button
+                                  type="button"
+                                  phx-click="toggle_activity"
+                                  class={[
+                                    "px-1.5 py-0.5 rounded text-xs font-bold leading-none",
+                                    "text-slate-300 hover:text-white transition-colors"
+                                  ]}
+                                  title={if @activity_expanded, do: "Collapse", else: "Expand"}
+                                >
+                                  <%= if @activity_expanded do %>
+                                    &#x25BC;
+                                  <% else %>
+                                    &#x25B2;
+                                  <% end %>
+                                </button>
+                              </div>
+                              <%= if @activity_expanded do %>
+                                <div class="px-3 py-2 border-t border-slate-600 space-y-2 max-h-96 overflow-y-auto">
+                                  <%= for event <- intermediate_events_list(message, @streaming_events) do %>
+                                    <%= cond do %>
+                                      <% event.type == :chunk -> %>
+                                        <div class="text-xs text-slate-300 border-l border-slate-600 pl-3 py-1">
+                                          <div class="whitespace-pre-wrap break-words">
+                                            {event.content}
+                                          </div>
+                                        </div>
+                                      <% event.type == :tool_call -> %>
+                                        <div class="text-xs border-l border-blue-600 pl-3 py-1">
+                                          <div class="text-blue-400 mb-1">
+                                            Calling tool:
+                                            <span class="font-mono">{event.tool_name}</span>
+                                          </div>
+                                          <%= if event[:args] && map_size(event.args) > 0 do %>
+                                            <pre class="text-xs text-blue-300 bg-slate-900/50 p-1 mt-1">{inspect(event.args, pretty: true, limit: 3)}</pre>
+                                          <% end %>
+                                        </div>
+                                      <% event.type == :tool_result -> %>
+                                        <div class="text-xs border-l border-green-600 pl-3 py-1">
+                                          <div class="text-green-400 mb-1">
+                                            Tool completed:
+                                            <span class="font-mono">{event.tool_name}</span>
+                                          </div>
+                                          <pre class="text-xs text-green-300 bg-slate-900/50 p-1 mt-1 max-h-20 overflow-y-auto">{String.slice(event.content, 0, 200)}<%= if String.length(event.content) > 200, do: "..." %></pre>
+                                        </div>
+                                      <% true -> %>
+                                        <div class="text-xs text-slate-400 italic">
+                                          {event.content}
+                                        </div>
+                                    <% end %>
+                                  <% end %>
+                                </div>
+                              <% end %>
+                            </div>
+                          <% end %>
+
+                          <%!-- Main streaming/final response --%>
+                          <div class="text-white border border-slate-600 px-4 py-3 max-w-[80%] relative">
+                            <%= if message.streaming do %>
+                              <p class="whitespace-pre-wrap break-words">{message.content}</p>
+                              <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
+                            <% else %>
+                              <div class="prose-chat">{raw(message.html_content)}</div>
+                              <button
+                                type="button"
+                                class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Copy message"
+                              >
+                                <.icon
+                                  name="hero-clipboard-document"
+                                  class="w-4 h-4 copy-icon"
+                                />
+                                <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                              </button>
+                            <% end %>
+                          </div>
+                        </div>
+                    <% end %>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1691,8 +1695,8 @@ defmodule OllamaChatWeb.ChatLive do
               </div>
             <% end %>
 
-            <%!-- Input form --%>
-            <div class="border-t border-slate-700 bg-slate-800/80 p-4">
+            <%!-- Input area: Message composer with textarea, Attach and Send buttons --%>
+            <div class="bg-slate-800/50 rounded-b-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-t-0 p-4 flex-shrink-0">
               <%!-- Context attachments display --%>
               <%= if length(@context_attachments) > 0 do %>
                 <div class="mb-3 p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
