@@ -903,180 +903,181 @@ defmodule OllamaChatWeb.ChatLive do
   def render(assigns) do
     ~H"""
     <div class="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-      <div class="mx-auto max-w-5xl px-4 py-8">
-        <%!-- Header --%>
-        <div class="mb-8">
-          <div class="flex items-center justify-between">
-            <div>
-              <h1 class="text-4xl font-bold text-white mb-2">Ollama Chat</h1>
-              <div class="flex items-center gap-3">
-                <div class="flex items-center gap-2">
-                  <div class={[
-                    "w-3 h-3 rounded-full",
-                    @ollama_status == :running && "bg-green-500 animate-pulse",
-                    @ollama_status == :stopped && "bg-red-500",
-                    @ollama_status == :unknown && "bg-yellow-500"
-                  ]}>
-                  </div>
-                  <span class="text-sm text-gray-300">
-                    {if @ollama_status == :running, do: "Connected", else: "Disconnected"}
-                  </span>
-                  <%= if @ollama_status == :stopped and @start_command_configured and not @recovering do %>
-                    <button
-                      phx-click="start_ollama"
-                      id="start-ollama-btn"
-                      class="ml-1 px-2 py-0.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center gap-1"
-                    >
-                      <.icon name="hero-play" class="w-3 h-3" /> Start
-                    </button>
-                  <% end %>
+      <div class="mx-auto max-w-7xl px-4 py-8 xl:flex xl:gap-6">
+        <%!-- Sidebar (left column on wide screens) --%>
+        <div class="xl:w-80 xl:flex-shrink-0 xl:sticky xl:top-8 xl:self-start xl:max-h-[calc(100vh-4rem)] xl:overflow-y-auto mb-6 xl:mb-0">
+          <%!-- Header --%>
+          <div class="mb-6">
+            <h1 class="text-4xl font-bold text-white mb-2">Ollama Chat</h1>
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-2">
+                <div class={[
+                  "w-3 h-3 rounded-full",
+                  @ollama_status == :running && "bg-green-500 animate-pulse",
+                  @ollama_status == :stopped && "bg-red-500",
+                  @ollama_status == :unknown && "bg-yellow-500"
+                ]}>
                 </div>
-              </div>
-            </div>
-
-            <div class="flex items-center gap-4">
-              <%!-- Model selector --%>
-              <%= if @available_models != [] do %>
-                <div class="relative">
-                  <label class="text-sm text-gray-300 mb-1 block">Model</label>
-                  <select
-                    class="bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    phx-change="select_model"
-                    name="model"
-                  >
-                    <option
-                      :for={model <- @available_models}
-                      value={model}
-                      selected={model == @selected_model}
-                    >
-                      {model}
-                    </option>
-                  </select>
-                </div>
-              <% end %>
-
-              <%!-- Conversations selector --%>
-              <div class="relative" id="conversations-dropdown" phx-hook=".ConversationManager">
-                <label class="text-sm text-gray-300 mb-1 block">Conversations</label>
-                <select
-                  class="bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[200px]"
-                  phx-change="load_conversation"
-                  name="conversation_id"
-                >
-                  <option value="" selected={@current_conversation_id == nil}>
-                    <%= if @current_conversation_id == nil do %>
-                      ✓
-                    <% end %>
-                    New Chat
-                  </option>
-                  <option
-                    :for={conv <- @conversations}
-                    value={conv["id"]}
-                    selected={conv["id"] == @current_conversation_id}
-                  >
-                    <%= if conv["id"] == @current_conversation_id do %>
-                      ✓
-                    <% end %>
-                    {conv["title"]}
-                  </option>
-                </select>
-              </div>
-
-              <button
-                type="button"
-                phx-click="clear_chat"
-                class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700 mt-6"
-                title="New Chat"
-              >
-                <.icon name="hero-plus-circle" class="w-5 h-5" />
-              </button>
-
-              <%!-- Export dropdown --%>
-              <div class="relative mt-6" id="export-menu">
-                <button
-                  type="button"
-                  phx-click={JS.toggle(to: "#export-options")}
-                  disabled={@current_conversation_id == nil}
-                  class={[
-                    "px-4 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700",
-                    if(@current_conversation_id != nil,
-                      do: "hover:bg-slate-700",
-                      else: "opacity-50 cursor-not-allowed"
-                    )
-                  ]}
-                  title="Export conversation"
-                  id="export-button"
-                >
-                  <.icon name="hero-arrow-down-tray" class="w-5 h-5" />
-                </button>
-                <div
-                  id="export-options"
-                  class="hidden absolute right-0 mt-1 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden"
-                >
+                <span class="text-sm text-gray-300">
+                  {if @ollama_status == :running, do: "Connected", else: "Disconnected"}
+                </span>
+                <%= if @ollama_status == :stopped and @start_command_configured and not @recovering do %>
                   <button
-                    type="button"
-                    phx-click={
-                      JS.push("export_conversation", value: %{format: "markdown"})
-                      |> JS.toggle(to: "#export-options")
-                    }
-                    class="w-full text-left px-4 py-2.5 text-sm text-white hover:bg-slate-700 transition-colors flex items-center gap-2"
-                    id="export-markdown-btn"
+                    phx-click="start_ollama"
+                    id="start-ollama-btn"
+                    class="ml-1 px-2 py-0.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center gap-1"
                   >
-                    <.icon name="hero-document-text" class="w-4 h-4" /> Export as Markdown
+                    <.icon name="hero-play" class="w-3 h-3" /> Start
                   </button>
-                  <button
-                    type="button"
-                    phx-click={
-                      JS.push("export_conversation", value: %{format: "json"})
-                      |> JS.toggle(to: "#export-options")
-                    }
-                    class="w-full text-left px-4 py-2.5 text-sm text-white hover:bg-slate-700 transition-colors flex items-center gap-2"
-                    id="export-json-btn"
-                  >
-                    <.icon name="hero-code-bracket" class="w-4 h-4" /> Export as JSON
-                  </button>
-                </div>
+                <% end %>
               </div>
             </div>
           </div>
-        </div>
 
-        <%!-- System prompt panel --%>
-        <div class="mb-4">
-          <button
-            type="button"
-            phx-click="toggle_system_prompt"
-            class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
-          >
-            <.icon
-              name={if @system_prompt_open, do: "hero-chevron-down", else: "hero-chevron-right"}
-              class="w-4 h-4"
-            />
-            <span>System Prompt</span>
-            <%= if @system_prompt != "" do %>
-              <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">Active</span>
-            <% end %>
-          </button>
-          <%= if @system_prompt_open do %>
-            <div class="mt-2">
-              <.form
-                for={to_form(%{"system_prompt" => @system_prompt})}
-                id="system-prompt-form"
-                phx-change="update_system_prompt"
+          <%!-- Model selector --%>
+          <%= if @available_models != [] do %>
+            <div class="mb-4">
+              <label class="text-sm text-gray-300 mb-1 block">Model</label>
+              <select
+                class="w-full bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                phx-change="select_model"
+                name="model"
               >
-                <textarea
-                  name="system_prompt"
-                  placeholder="Enter a system prompt to set the model's behavior (e.g., 'You are a helpful coding assistant')..."
-                  rows="3"
-                  class="w-full bg-slate-800 text-white border border-slate-700 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y placeholder-slate-500"
-                  phx-debounce="500"
-                >{@system_prompt}</textarea>
-              </.form>
+                <option
+                  :for={model <- @available_models}
+                  value={model}
+                  selected={model == @selected_model}
+                >
+                  {model}
+                </option>
+              </select>
             </div>
           <% end %>
-        </div>
 
-        <%!-- MCP Tools panel --%>
+          <%!-- Conversations selector --%>
+          <div class="mb-4" id="conversations-dropdown" phx-hook=".ConversationManager">
+            <label class="text-sm text-gray-300 mb-1 block">Conversations</label>
+            <select
+              class="w-full bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              phx-change="load_conversation"
+              name="conversation_id"
+            >
+              <option value="" selected={@current_conversation_id == nil}>
+                <%= if @current_conversation_id == nil do %>
+                  ✓
+                <% end %>
+                New Chat
+              </option>
+              <option
+                :for={conv <- @conversations}
+                value={conv["id"]}
+                selected={conv["id"] == @current_conversation_id}
+              >
+                <%= if conv["id"] == @current_conversation_id do %>
+                  ✓
+                <% end %>
+                {conv["title"]}
+              </option>
+            </select>
+          </div>
+
+          <%!-- Action buttons --%>
+          <div class="flex items-center gap-2 mb-4">
+            <button
+              type="button"
+              phx-click="clear_chat"
+              class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2"
+              title="New Chat"
+            >
+              <.icon name="hero-plus-circle" class="w-5 h-5" />
+              <span class="text-sm">New Chat</span>
+            </button>
+
+            <%!-- Export dropdown --%>
+            <div class="relative" id="export-menu">
+              <button
+                type="button"
+                phx-click={JS.toggle(to: "#export-options")}
+                disabled={@current_conversation_id == nil}
+                class={[
+                  "px-4 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2",
+                  if(@current_conversation_id != nil,
+                    do: "hover:bg-slate-700",
+                    else: "opacity-50 cursor-not-allowed"
+                  )
+                ]}
+                title="Export conversation"
+                id="export-button"
+              >
+                <.icon name="hero-arrow-down-tray" class="w-5 h-5" />
+                <span class="text-sm">Export</span>
+              </button>
+              <div
+                id="export-options"
+                class="hidden absolute left-0 mt-1 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden"
+              >
+                <button
+                  type="button"
+                  phx-click={
+                    JS.push("export_conversation", value: %{format: "markdown"})
+                    |> JS.toggle(to: "#export-options")
+                  }
+                  class="w-full text-left px-4 py-2.5 text-sm text-white hover:bg-slate-700 transition-colors flex items-center gap-2"
+                  id="export-markdown-btn"
+                >
+                  <.icon name="hero-document-text" class="w-4 h-4" /> Markdown
+                </button>
+                <button
+                  type="button"
+                  phx-click={
+                    JS.push("export_conversation", value: %{format: "json"})
+                    |> JS.toggle(to: "#export-options")
+                  }
+                  class="w-full text-left px-4 py-2.5 text-sm text-white hover:bg-slate-700 transition-colors flex items-center gap-2"
+                  id="export-json-btn"
+                >
+                  <.icon name="hero-code-bracket" class="w-4 h-4" /> JSON
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <%!-- System prompt panel --%>
+          <div class="mb-4">
+            <button
+              type="button"
+              phx-click="toggle_system_prompt"
+              class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
+            >
+              <.icon
+                name={if @system_prompt_open, do: "hero-chevron-down", else: "hero-chevron-right"}
+                class="w-4 h-4"
+              />
+              <span>System Prompt</span>
+              <%= if @system_prompt != "" do %>
+                <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">Active</span>
+              <% end %>
+            </button>
+            <%= if @system_prompt_open do %>
+              <div class="mt-2">
+                <.form
+                  for={to_form(%{"system_prompt" => @system_prompt})}
+                  id="system-prompt-form"
+                  phx-change="update_system_prompt"
+                >
+                  <textarea
+                    name="system_prompt"
+                    placeholder="Enter a system prompt to set the model's behavior (e.g., 'You are a helpful coding assistant')..."
+                    rows="3"
+                    class="w-full bg-slate-800 text-white border border-slate-700 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y placeholder-slate-500"
+                    phx-debounce="500"
+                  >{@system_prompt}</textarea>
+                </.form>
+              </div>
+            <% end %>
+          </div>
+
+          <%!-- MCP Tools panel --%>
         <%= if @mcp_enabled? do %>
           <div class="mb-4">
             <button
@@ -1307,6 +1308,17 @@ defmodule OllamaChatWeb.ChatLive do
           <% end %>
         </div>
 
+          <%!-- Footer info (sidebar) --%>
+          <div class="text-center text-sm text-slate-400 mt-6 hidden xl:block">
+            <p>
+              Powered by Ollama • Model:
+              <span class="text-blue-400 font-medium">{@selected_model}</span>
+            </p>
+          </div>
+        </div>
+
+        <%!-- Main content (right column on wide screens) --%>
+        <div class="xl:flex-1 xl:min-w-0 flex flex-col xl:max-h-[calc(100vh-4rem)]">
         <%!-- Status message display --%>
         <%= if @status_message do %>
           <div class={[
@@ -1392,11 +1404,11 @@ defmodule OllamaChatWeb.ChatLive do
         <% end %>
 
         <%!-- Chat messages --%>
-        <div class="bg-slate-800/50 rounded-xl shadow-2xl backdrop-blur-sm border border-slate-700 mb-6 overflow-hidden">
+        <div class="bg-slate-800/50 rounded-xl shadow-2xl backdrop-blur-sm border border-slate-700 mb-6 overflow-hidden xl:flex-1 xl:flex xl:flex-col xl:min-h-0">
           <div
             id="messages-container"
             phx-hook=".CopyMessage"
-            class="h-[600px] overflow-y-auto p-6 space-y-4 relative"
+            class="h-[600px] xl:h-auto xl:flex-1 overflow-y-auto p-6 space-y-4 relative"
           >
             <%= if @messages_empty? do %>
               <div class="text-center py-20 absolute inset-0 flex flex-col items-center justify-center">
@@ -1426,7 +1438,7 @@ defmodule OllamaChatWeb.ChatLive do
                         <p class="whitespace-pre-wrap break-words">{message.content}</p>
                         <button
                           type="button"
-                          class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                          class="copy-btn absolute top-2 left-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Copy message"
                         >
                           <.icon
@@ -1707,7 +1719,7 @@ defmodule OllamaChatWeb.ChatLive do
                   <.input
                     field={@form[:message]}
                     type="textarea"
-                    placeholder="Type your message... (Click Send to submit)"
+                    placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
                     autocomplete="off"
                     disabled={@loading}
                     rows="4"
@@ -1774,12 +1786,13 @@ defmodule OllamaChatWeb.ChatLive do
           </div>
         </div>
 
-        <%!-- Footer info --%>
-        <div class="text-center text-sm text-slate-400">
+        <%!-- Footer info (mobile only, shown below chat on small screens) --%>
+        <div class="text-center text-sm text-slate-400 xl:hidden">
           <p>
             Powered by Ollama • Model:
             <span class="text-blue-400 font-medium">{@selected_model}</span>
           </p>
+        </div>
         </div>
       </div>
     </div>
@@ -1828,14 +1841,18 @@ defmodule OllamaChatWeb.ChatLive do
       }
     </script>
 
-    <%!-- Prevent Enter key from submitting form --%>
+    <%!-- Enter submits, Shift+Enter inserts newline --%>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".PreventEnterSubmit">
       export default {
         mounted() {
           this.el.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-              // Allow Enter to insert newline, but prevent form submission
-              e.stopPropagation();
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              // Submit the parent form
+              const form = this.el.closest("form");
+              if (form) {
+                form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+              }
             }
           });
         }
