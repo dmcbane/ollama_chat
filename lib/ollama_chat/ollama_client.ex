@@ -195,6 +195,47 @@ defmodule OllamaChat.OllamaClient do
     end
   end
 
+  @doc """
+  Kills the Ollama process.
+  Returns :ok on success, {:error, reason} on failure.
+  """
+  def kill_ollama do
+    Logger.info("Attempting to kill Ollama process")
+
+    case System.cmd("sh", ["-c", "pkill -9 ollama"], stderr_to_stdout: true) do
+      {_output, 0} ->
+        Logger.info("Ollama process killed successfully")
+        :ok
+
+      {_output, 1} ->
+        # pkill returns 1 if no process found - not necessarily an error
+        Logger.info("No Ollama process found to kill")
+        :ok
+
+      {output, exit_code} ->
+        Logger.error("Failed to kill Ollama (exit_code=#{exit_code}): #{output}")
+        {:error, "Failed to kill Ollama (exit code #{exit_code})"}
+    end
+  end
+
+  @doc """
+  Restarts the Ollama process by killing it and starting it again.
+  Returns :ok on success, {:error, reason} on failure.
+  """
+  def restart_ollama do
+    Logger.info("Restarting Ollama")
+
+    case kill_ollama() do
+      :ok ->
+        # Wait a moment for the process to fully terminate
+        Process.sleep(1000)
+        start_ollama()
+
+      error ->
+        error
+    end
+  end
+
   defp base_url do
     Application.get_env(:ollama_chat, :ollama_base_url, @default_base_url)
   end

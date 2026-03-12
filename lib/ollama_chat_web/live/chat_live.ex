@@ -498,6 +498,63 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("restart_ollama", _params, socket) do
+    socket =
+      socket
+      |> assign(:status_message, "Restarting Ollama...")
+      |> assign(:recovering, true)
+      |> assign(:ollama_status, :unknown)
+
+    # Cancel any current stream
+    if socket.assigns.streaming_pid do
+      Process.exit(socket.assigns.streaming_pid, :kill)
+    end
+
+    # Start restart in background
+    parent = self()
+
+    spawn(fn ->
+      case OllamaClient.restart_ollama() do
+        :ok ->
+          send(parent, {:restart_success})
+
+        {:error, reason} ->
+          send(parent, {:restart_failed, reason})
+      end
+    end)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("kill_ollama", _params, socket) do
+    socket =
+      socket
+      |> assign(:status_message, "Killing Ollama process...")
+      |> assign(:ollama_status, :unknown)
+
+    # Cancel any current stream
+    if socket.assigns.streaming_pid do
+      Process.exit(socket.assigns.streaming_pid, :kill)
+    end
+
+    # Kill in background
+    parent = self()
+
+    spawn(fn ->
+      case OllamaClient.kill_ollama() do
+        :ok ->
+          send(parent, {:kill_success})
+
+        {:error, reason} ->
+          send(parent, {:kill_failed, reason})
+      end
+    end)
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info(:check_ollama_status, socket) do
     status = if OllamaClient.ollama_running?(), do: :running, else: :stopped
 
@@ -780,6 +837,64 @@ defmodule OllamaChatWeb.ChatLive do
      |> assign(:error, "Failed to start Ollama: #{reason}")}
   end
 
+  @impl true
+  def handle_info({:restart_success}, socket) do
+    socket =
+      socket
+      |> assign(:status_message, "Ollama restarted successfully")
+      |> assign(:recovering, false)
+      |> assign(:ollama_status, :running)
+      |> assign(:loading, false)
+      |> assign(:streaming_message, "")
+      |> assign(:streaming_message_id, nil)
+
+    # Clear status message after a delay
+    Process.send_after(self(), :clear_status, 3000)
+
+    # Reload models
+    send(self(), :load_models)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:restart_failed, reason}, socket) do
+    socket =
+      socket
+      |> assign(:status_message, nil)
+      |> assign(:recovering, false)
+      |> assign(:ollama_status, :stopped)
+      |> assign(:error, "Failed to restart Ollama: #{reason}")
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:kill_success}, socket) do
+    socket =
+      socket
+      |> assign(:status_message, "Ollama process killed")
+      |> assign(:ollama_status, :stopped)
+      |> assign(:loading, false)
+      |> assign(:streaming_message, "")
+      |> assign(:streaming_message_id, nil)
+
+    # Clear status message after a delay
+    Process.send_after(self(), :clear_status, 3000)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:kill_failed, reason}, socket) do
+    socket =
+      socket
+      |> assign(:status_message, nil)
+      |> assign(:error, "Failed to kill Ollama: #{reason}")
+
+    {:noreply, socket}
+  end
+
   # MCP Tool Call Handlers
 
   @impl true
@@ -982,6 +1097,24 @@ defmodule OllamaChatWeb.ChatLive do
                     class="ml-1 px-2 py-0.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center gap-1"
                   >
                     <.icon name="hero-play" class="w-3 h-3" /> Start
+                  </button>
+                <% end %>
+                <%= if @ollama_status == :running and @start_command_configured do %>
+                  <button
+                    phx-click="restart_ollama"
+                    id="restart-ollama-btn"
+                    class="ml-1 px-2 py-0.5 text-xs font-medium bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors flex items-center gap-1"
+                    title="Restart Ollama (useful for runaway responses)"
+                  >
+                    <.icon name="hero-arrow-path" class="w-3 h-3" /> Restart
+                  </button>
+                  <button
+                    phx-click="kill_ollama"
+                    id="kill-ollama-btn"
+                    class="ml-1 px-2 py-0.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors flex items-center gap-1"
+                    title="Kill Ollama process"
+                  >
+                    <.icon name="hero-x-circle" class="w-3 h-3" /> Kill
                   </button>
                 <% end %>
               </div>
