@@ -1485,9 +1485,9 @@ defmodule OllamaChatWeb.ChatLive do
 
           <%!-- Chat and input wrapper: Contains both the chat area (messages) and input area (compose) --%>
           <%!-- Layout: Chat area fills available space (flex-1), input area stays at bottom (flex-shrink-0) --%>
-          <div class="flex-1 flex flex-col">
+          <div class="flex-1 flex flex-col min-h-0">
             <%!-- Chat area: Scrollable message history (user and assistant messages) --%>
-            <div class="bg-slate-800/50 rounded-t-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-b-0 overflow-hidden flex-1 flex flex-col">
+            <div class="bg-slate-800/50 rounded-t-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-b-0 overflow-hidden flex-1 flex flex-col min-h-0">
               <div
                 id="messages-container"
                 phx-hook=".CopyMessage .ScrollToBottom"
