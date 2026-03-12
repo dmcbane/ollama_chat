@@ -1696,7 +1696,7 @@ defmodule OllamaChatWeb.ChatLive do
             <% end %>
 
             <%!-- Input area: Message composer with textarea, Attach and Send buttons --%>
-            <div class="bg-slate-800/50 rounded-b-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-t-0 p-4 flex-shrink-0 max-h-[300px] overflow-y-auto">
+            <div class="bg-slate-800/50 rounded-b-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-t-0 p-4 flex-shrink-0 max-h-[300px] overflow-y-auto mt-auto">
               <%!-- Context attachments display --%>
               <%= if length(@context_attachments) > 0 do %>
                 <div class="mb-3 p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
