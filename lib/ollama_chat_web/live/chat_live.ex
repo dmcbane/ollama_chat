@@ -1518,7 +1518,7 @@ defmodule OllamaChatWeb.ChatLive do
                           <p class="whitespace-pre-wrap break-words">{message.content}</p>
                           <button
                             type="button"
-                            class="copy-btn absolute top-2 left-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            class="copy-btn absolute top-2 left-2 p-1 rounded text-cyan-400 hover:text-cyan-300 bg-black/30 hover:bg-black/50 opacity-0 group-hover:opacity-100 transition-all z-10"
                             title="Copy message"
                           >
                             <.icon
@@ -1821,7 +1821,7 @@ defmodule OllamaChatWeb.ChatLive do
                         id="copy-prompt-btn"
                         phx-hook=".CopyPrompt"
                         data-prompt={@form[:message].value}
-                        class="absolute top-2 right-2 p-2 rounded text-slate-400 hover:text-white hover:bg-slate-700/50 transition-all"
+                        class="absolute top-2 right-2 p-2 rounded text-cyan-400 hover:text-cyan-300 bg-slate-800 hover:bg-slate-900 transition-all z-10"
                         title="Copy prompt"
                       >
                         <.icon name="hero-clipboard-document" class="w-4 h-4 copy-icon" />
