@@ -59,6 +59,8 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:mcp_server_status, %{})
       |> assign(:pending_approval, nil)
       |> assign(:show_mcp_settings, false)
+      |> assign(:show_storage_settings, false)
+      |> assign(:save_intermediate_events, false)
       |> assign(:streaming_pid, nil)
       |> assign(:attachments, [])
       |> assign(:context_attachments, [])
@@ -623,7 +625,7 @@ defmodule OllamaChatWeb.ChatLive do
       html_content: Markdown.render_to_string(raw_content),
       timestamp: DateTime.utc_now(),
       streaming: false,
-      intermediate_events: intermediate
+      intermediate_events: if(socket.assigns.save_intermediate_events, do: intermediate, else: [])
     }
 
     updated_history = [final_message | socket.assigns.message_history]
@@ -876,6 +878,24 @@ defmodule OllamaChatWeb.ChatLive do
       end
 
     {:noreply, assign(socket, :show_mcp_settings, !socket.assigns.show_mcp_settings)}
+  end
+
+  @impl true
+  def handle_event("toggle_storage_settings", _params, socket) do
+    {:noreply, assign(socket, :show_storage_settings, !socket.assigns.show_storage_settings)}
+  end
+
+  @impl true
+  def handle_event("toggle_save_intermediate_events", _params, socket) do
+    new_value = !socket.assigns.save_intermediate_events
+    socket = assign(socket, :save_intermediate_events, new_value)
+    # Push to localStorage via JavaScript hook
+    {:noreply, push_event(socket, "save_preference", %{save_intermediate_events: new_value})}
+  end
+
+  @impl true
+  def handle_event("preference_loaded", %{"save_intermediate_events" => value}, socket) do
+    {:noreply, assign(socket, :save_intermediate_events, value)}
   end
 
   @impl true
@@ -1148,6 +1168,44 @@ defmodule OllamaChatWeb.ChatLive do
                     phx-debounce="500"
                   >{@system_prompt}</textarea>
                 </.form>
+              </div>
+            <% end %>
+          </div>
+
+          <%!-- Storage Settings --%>
+          <div id="storage-settings" class="mb-4" phx-hook=".StorageSettings">
+            <div class="mb-2">
+              <button
+                type="button"
+                phx-click="toggle_storage_settings"
+                class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
+              >
+                <.icon
+                  name={
+                    if @show_storage_settings, do: "hero-chevron-down", else: "hero-chevron-right"
+                  }
+                  class="w-4 h-4"
+                />
+                <.icon name="hero-circle-stack" class="w-4 h-4" />
+                <span>Storage Settings</span>
+              </button>
+            </div>
+            <%= if @show_storage_settings do %>
+              <div class="ml-8 space-y-2">
+                <label class="flex items-start gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    phx-click="toggle_save_intermediate_events"
+                    checked={@save_intermediate_events}
+                    class="mt-0.5 rounded border-gray-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900 bg-gray-700"
+                  />
+                  <div>
+                    <div class="text-gray-300">Save tool activity in history</div>
+                    <div class="text-xs text-gray-500 mt-0.5">
+                      Stores tool calls and responses in localStorage. Disable to save storage space.
+                    </div>
+                  </div>
+                </label>
               </div>
             <% end %>
           </div>
@@ -2260,6 +2318,44 @@ defmodule OllamaChatWeb.ChatLive do
             hour: 'numeric',
             minute: '2-digit'
           });
+        }
+      }
+    </script>
+
+    <%!-- Storage Settings Manager hook for preference persistence --%>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".StorageSettings">
+      export default {
+        mounted() {
+          this.preferenceKey = "ollama_chat_save_intermediate_events";
+
+          // Load preference from localStorage (default: false)
+          this.loadPreference();
+
+          // Listen for preference changes from LiveView
+          this.handleEvent("save_preference", ({ save_intermediate_events }) => {
+            try {
+              localStorage.setItem(this.preferenceKey, JSON.stringify(save_intermediate_events));
+              console.log("Saved intermediate events preference:", save_intermediate_events);
+            } catch (e) {
+              console.error("Failed to save preference:", e);
+            }
+          });
+
+          // Listen for preference load requests
+          this.handleEvent("load_preference", () => {
+            this.loadPreference();
+          });
+        },
+
+        loadPreference() {
+          try {
+            const saved = localStorage.getItem(this.preferenceKey);
+            const preference = saved !== null ? JSON.parse(saved) : false; // Default to false
+            this.pushEvent("preference_loaded", { save_intermediate_events: preference });
+          } catch (e) {
+            console.error("Failed to load preference:", e);
+            this.pushEvent("preference_loaded", { save_intermediate_events: false });
+          }
         }
       }
     </script>
