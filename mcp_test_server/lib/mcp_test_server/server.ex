@@ -288,6 +288,118 @@ defmodule McpTestServer.Server do
         }
       },
       %{
+        name: "delete_files",
+        description: "Delete multiple files at once (batch operation)",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            paths: %{
+              type: "array",
+              items: %{type: "string"},
+              description: "Array of file paths to delete"
+            }
+          },
+          required: ["paths"]
+        }
+      },
+      %{
+        name: "delete_directories",
+        description: "Delete multiple directories at once (batch operation)",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            paths: %{
+              type: "array",
+              items: %{type: "string"},
+              description: "Array of directory paths to delete"
+            }
+          },
+          required: ["paths"]
+        }
+      },
+      %{
+        name: "delete_files_by_pattern",
+        description: "Delete all files matching a glob pattern",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            pattern: %{
+              type: "string",
+              description: "Glob pattern (e.g., '*.tmp', 'logs/*.log', '**/*.bak')"
+            },
+            path: %{
+              type: "string",
+              description: "Directory to search in (default: workspace root)",
+              default: "."
+            }
+          },
+          required: ["pattern"]
+        }
+      },
+      %{
+        name: "delete_directories_by_pattern",
+        description: "Delete all directories matching a name pattern",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            pattern: %{
+              type: "string",
+              description: "Name pattern (e.g., 'temp*', '*_backup', 'node_modules')"
+            },
+            path: %{
+              type: "string",
+              description: "Directory to search in (default: workspace root)",
+              default: "."
+            }
+          },
+          required: ["pattern"]
+        }
+      },
+      %{
+        name: "copy_files",
+        description: "Copy multiple files at once (batch operation)",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            operations: %{
+              type: "array",
+              items: %{
+                type: "object",
+                properties: %{
+                  source: %{type: "string"},
+                  destination: %{type: "string"}
+                },
+                required: ["source", "destination"]
+              },
+              description: "Array of {source, destination} copy operations"
+            }
+          },
+          required: ["operations"]
+        }
+      },
+      %{
+        name: "move_files",
+        description: "Move multiple files at once (batch operation)",
+        inputSchema: %{
+          type: "object",
+          properties: %{
+            operations: %{
+              type: "array",
+              items: %{
+                type: "object",
+                properties: %{
+                  source: %{type: "string"},
+                  destination: %{type: "string"}
+                },
+                required: ["source", "destination"]
+              },
+              description: "Array of {source, destination} move operations"
+            }
+          },
+          required: ["operations"]
+        }
+      },
+      %{
         name: "search_files",
         description: "Search for files by name pattern",
         inputSchema: %{
@@ -576,6 +688,12 @@ defmodule McpTestServer.Server do
       "beam_schedulers" -> handle_beam_schedulers(arguments)
       "beam_applications" -> handle_beam_applications(arguments)
       "beam_ets_tables" -> handle_beam_ets_tables(arguments)
+      "delete_files" -> handle_delete_files(arguments)
+      "delete_directories" -> handle_delete_directories(arguments)
+      "delete_files_by_pattern" -> handle_delete_files_by_pattern(arguments)
+      "delete_directories_by_pattern" -> handle_delete_directories_by_pattern(arguments)
+      "copy_files" -> handle_copy_files(arguments)
+      "move_files" -> handle_move_files(arguments)
       _ -> %{isError: true, content: [%{type: "text", text: "Unknown tool: #{tool_name}"}]}
     end
   end
@@ -886,6 +1004,357 @@ defmodule McpTestServer.Server do
 
       {:error, reason} ->
         %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  # Batch delete operations
+  defp handle_delete_files(%{"paths" => paths}) when is_list(paths) do
+    workspace = get_workspace()
+
+    results = Enum.map(paths, fn path ->
+      full_path = Path.join(workspace, path)
+
+      case validate_path(full_path, workspace) do
+        :ok ->
+          case File.rm(full_path) do
+            :ok -> {:ok, path}
+            {:error, :enoent} -> {:error, path, "not found"}
+            {:error, reason} -> {:error, path, inspect(reason)}
+          end
+        {:error, reason} ->
+          {:error, path, reason}
+      end
+    end)
+
+    successful = Enum.filter(results, fn
+      {:ok, _} -> true
+      _ -> false
+    end)
+
+    failed = Enum.filter(results, fn
+      {:error, _, _} -> true
+      _ -> false
+    end)
+
+    success_count = length(successful)
+    fail_count = length(failed)
+
+    text = cond do
+      fail_count == 0 ->
+        "Successfully deleted #{success_count} file(s)"
+      success_count == 0 ->
+        error_details = Enum.map(failed, fn {:error, path, reason} ->
+          "  - #{path}: #{reason}"
+        end) |> Enum.join("\n")
+        "Failed to delete all files:\n#{error_details}"
+      true ->
+        success_list = Enum.map(successful, fn {:ok, path} -> "  ✓ #{path}" end) |> Enum.join("\n")
+        error_list = Enum.map(failed, fn {:error, path, reason} -> "  ✗ #{path}: #{reason}" end) |> Enum.join("\n")
+        "Deleted #{success_count} file(s), #{fail_count} failed:\nSuccessful:\n#{success_list}\nFailed:\n#{error_list}"
+    end
+
+    if fail_count > 0 and success_count == 0 do
+      %{isError: true, content: [%{type: "text", text: text}]}
+    else
+      %{content: [%{type: "text", text: text}]}
+    end
+  end
+
+  defp handle_delete_directories(%{"paths" => paths}) when is_list(paths) do
+    workspace = get_workspace()
+
+    results = Enum.map(paths, fn path ->
+      full_path = Path.join(workspace, path)
+
+      case validate_path(full_path, workspace) do
+        :ok ->
+          case File.rm_rf(full_path) do
+            {:ok, _files} -> {:ok, path}
+            {:error, reason, _file} -> {:error, path, inspect(reason)}
+          end
+        {:error, reason} ->
+          {:error, path, reason}
+      end
+    end)
+
+    successful = Enum.filter(results, fn
+      {:ok, _} -> true
+      _ -> false
+    end)
+
+    failed = Enum.filter(results, fn
+      {:error, _, _} -> true
+      _ -> false
+    end)
+
+    success_count = length(successful)
+    fail_count = length(failed)
+
+    text = cond do
+      fail_count == 0 ->
+        "Successfully deleted #{success_count} director#{if success_count == 1, do: "y", else: "ies"}"
+      success_count == 0 ->
+        error_details = Enum.map(failed, fn {:error, path, reason} ->
+          "  - #{path}: #{reason}"
+        end) |> Enum.join("\n")
+        "Failed to delete all directories:\n#{error_details}"
+      true ->
+        success_list = Enum.map(successful, fn {:ok, path} -> "  ✓ #{path}" end) |> Enum.join("\n")
+        error_list = Enum.map(failed, fn {:error, path, reason} -> "  ✗ #{path}: #{reason}" end) |> Enum.join("\n")
+        "Deleted #{success_count} director#{if success_count == 1, do: "y", else: "ies"}, #{fail_count} failed:\nSuccessful:\n#{success_list}\nFailed:\n#{error_list}"
+    end
+
+    if fail_count > 0 and success_count == 0 do
+      %{isError: true, content: [%{type: "text", text: text}]}
+    else
+      %{content: [%{type: "text", text: text}]}
+    end
+  end
+
+  defp handle_delete_files_by_pattern(%{"pattern" => pattern} = args) do
+    workspace = get_workspace()
+    search_path = Map.get(args, "path", ".")
+    full_search_path = Path.join(workspace, search_path)
+
+    case validate_path(full_search_path, workspace) do
+      :ok ->
+        # Find all files matching the pattern
+        full_pattern = Path.join(full_search_path, pattern)
+        matches = Path.wildcard(full_pattern)
+
+        # Filter to only files (not directories)
+        files = Enum.filter(matches, fn path ->
+          File.regular?(path)
+        end)
+
+        if Enum.empty?(files) do
+          %{content: [%{type: "text", text: "No files found matching pattern: #{pattern}"}]}
+        else
+          # Delete all matching files
+          results = Enum.map(files, fn full_path ->
+            relative_path = Path.relative_to(full_path, workspace)
+            case File.rm(full_path) do
+              :ok -> {:ok, relative_path}
+              {:error, reason} -> {:error, relative_path, inspect(reason)}
+            end
+          end)
+
+          successful = Enum.filter(results, fn {:ok, _} -> true; _ -> false end)
+          failed = Enum.filter(results, fn {:error, _, _} -> true; _ -> false end)
+
+          success_count = length(successful)
+          fail_count = length(failed)
+
+          text = cond do
+            fail_count == 0 ->
+              file_list = Enum.map(successful, fn {:ok, path} -> "  - #{path}" end) |> Enum.join("\n")
+              "Deleted #{success_count} file(s) matching '#{pattern}':\n#{file_list}"
+            success_count == 0 ->
+              error_details = Enum.map(failed, fn {:error, path, reason} ->
+                "  - #{path}: #{reason}"
+              end) |> Enum.join("\n")
+              "Failed to delete files:\n#{error_details}"
+            true ->
+              success_list = Enum.map(successful, fn {:ok, path} -> "  ✓ #{path}" end) |> Enum.join("\n")
+              error_list = Enum.map(failed, fn {:error, path, reason} -> "  ✗ #{path}: #{reason}" end) |> Enum.join("\n")
+              "Deleted #{success_count} file(s), #{fail_count} failed:\nSuccessful:\n#{success_list}\nFailed:\n#{error_list}"
+          end
+
+          if fail_count > 0 and success_count == 0 do
+            %{isError: true, content: [%{type: "text", text: text}]}
+          else
+            %{content: [%{type: "text", text: text}]}
+          end
+        end
+
+      {:error, reason} ->
+        %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  defp handle_delete_directories_by_pattern(%{"pattern" => pattern} = args) do
+    workspace = get_workspace()
+    search_path = Map.get(args, "path", ".")
+    full_search_path = Path.join(workspace, search_path)
+
+    case validate_path(full_search_path, workspace) do
+      :ok ->
+        # Find all items in the search path
+        case File.ls(full_search_path) do
+          {:ok, entries} ->
+            # Filter directories that match the pattern
+            matching_dirs = Enum.filter(entries, fn entry ->
+              full_entry_path = Path.join(full_search_path, entry)
+              File.dir?(full_entry_path) and String.match?(entry, pattern_to_regex(pattern))
+            end)
+
+            if Enum.empty?(matching_dirs) do
+              %{content: [%{type: "text", text: "No directories found matching pattern: #{pattern}"}]}
+            else
+              # Delete all matching directories
+              results = Enum.map(matching_dirs, fn dir ->
+                full_path = Path.join(full_search_path, dir)
+                relative_path = Path.relative_to(full_path, workspace)
+
+                case File.rm_rf(full_path) do
+                  {:ok, _files} -> {:ok, relative_path}
+                  {:error, reason, _file} -> {:error, relative_path, inspect(reason)}
+                end
+              end)
+
+              successful = Enum.filter(results, fn {:ok, _} -> true; _ -> false end)
+              failed = Enum.filter(results, fn {:error, _, _} -> true; _ -> false end)
+
+              success_count = length(successful)
+              fail_count = length(failed)
+
+              text = cond do
+                fail_count == 0 ->
+                  dir_list = Enum.map(successful, fn {:ok, path} -> "  - #{path}" end) |> Enum.join("\n")
+                  "Deleted #{success_count} director#{if success_count == 1, do: "y", else: "ies"} matching '#{pattern}':\n#{dir_list}"
+                success_count == 0 ->
+                  error_details = Enum.map(failed, fn {:error, path, reason} ->
+                    "  - #{path}: #{reason}"
+                  end) |> Enum.join("\n")
+                  "Failed to delete directories:\n#{error_details}"
+                true ->
+                  success_list = Enum.map(successful, fn {:ok, path} -> "  ✓ #{path}" end) |> Enum.join("\n")
+                  error_list = Enum.map(failed, fn {:error, path, reason} -> "  ✗ #{path}: #{reason}" end) |> Enum.join("\n")
+                  "Deleted #{success_count} director#{if success_count == 1, do: "y", else: "ies"}, #{fail_count} failed:\nSuccessful:\n#{success_list}\nFailed:\n#{error_list}"
+              end
+
+              if fail_count > 0 and success_count == 0 do
+                %{isError: true, content: [%{type: "text", text: text}]}
+              else
+                %{content: [%{type: "text", text: text}]}
+              end
+            end
+
+          {:error, reason} ->
+            %{isError: true, content: [%{type: "text", text: "Error reading directory: #{inspect(reason)}"}]}
+        end
+
+      {:error, reason} ->
+        %{isError: true, content: [%{type: "text", text: reason}]}
+    end
+  end
+
+  # Helper function to convert simple wildcard pattern to regex
+  defp pattern_to_regex(pattern) do
+    # Escape regex special characters except * and ?
+    escaped = Regex.escape(pattern)
+    # Convert * to .* and ? to .
+    regex_pattern = escaped
+      |> String.replace("\\*", ".*")
+      |> String.replace("\\?", ".")
+
+    ~r/^#{regex_pattern}$/
+  end
+
+  # Batch copy and move operations
+  defp handle_copy_files(%{"operations" => operations}) when is_list(operations) do
+    workspace = get_workspace()
+
+    results = Enum.map(operations, fn operation ->
+      source = Map.get(operation, "source")
+      destination = Map.get(operation, "destination")
+
+      if is_nil(source) or is_nil(destination) do
+        {:error, "#{source} → #{destination}", "missing source or destination"}
+      else
+        source_full = Path.join(workspace, source)
+        dest_full = Path.join(workspace, destination)
+
+        with :ok <- validate_path(source_full, workspace),
+             :ok <- validate_path(dest_full, workspace) do
+          case File.copy(source_full, dest_full) do
+            {:ok, _bytes} -> {:ok, "#{source} → #{destination}"}
+            {:error, reason} -> {:error, "#{source} → #{destination}", inspect(reason)}
+          end
+        else
+          {:error, reason} -> {:error, "#{source} → #{destination}", reason}
+        end
+      end
+    end)
+
+    successful = Enum.filter(results, fn {:ok, _} -> true; _ -> false end)
+    failed = Enum.filter(results, fn {:error, _, _} -> true; _ -> false end)
+
+    success_count = length(successful)
+    fail_count = length(failed)
+
+    text = cond do
+      fail_count == 0 ->
+        file_list = Enum.map(successful, fn {:ok, path} -> "  ✓ #{path}" end) |> Enum.join("\n")
+        "Successfully copied #{success_count} file(s):\n#{file_list}"
+      success_count == 0 ->
+        error_details = Enum.map(failed, fn {:error, path, reason} ->
+          "  ✗ #{path}: #{reason}"
+        end) |> Enum.join("\n")
+        "Failed to copy all files:\n#{error_details}"
+      true ->
+        success_list = Enum.map(successful, fn {:ok, path} -> "  ✓ #{path}" end) |> Enum.join("\n")
+        error_list = Enum.map(failed, fn {:error, path, reason} -> "  ✗ #{path}: #{reason}" end) |> Enum.join("\n")
+        "Copied #{success_count} file(s), #{fail_count} failed:\nSuccessful:\n#{success_list}\nFailed:\n#{error_list}"
+    end
+
+    if fail_count > 0 and success_count == 0 do
+      %{isError: true, content: [%{type: "text", text: text}]}
+    else
+      %{content: [%{type: "text", text: text}]}
+    end
+  end
+
+  defp handle_move_files(%{"operations" => operations}) when is_list(operations) do
+    workspace = get_workspace()
+
+    results = Enum.map(operations, fn operation ->
+      source = Map.get(operation, "source")
+      destination = Map.get(operation, "destination")
+
+      if is_nil(source) or is_nil(destination) do
+        {:error, "#{source} → #{destination}", "missing source or destination"}
+      else
+        source_full = Path.join(workspace, source)
+        dest_full = Path.join(workspace, destination)
+
+        with :ok <- validate_path(source_full, workspace),
+             :ok <- validate_path(dest_full, workspace) do
+          case File.rename(source_full, dest_full) do
+            :ok -> {:ok, "#{source} → #{destination}"}
+            {:error, reason} -> {:error, "#{source} → #{destination}", inspect(reason)}
+          end
+        else
+          {:error, reason} -> {:error, "#{source} → #{destination}", reason}
+        end
+      end
+    end)
+
+    successful = Enum.filter(results, fn {:ok, _} -> true; _ -> false end)
+    failed = Enum.filter(results, fn {:error, _, _} -> true; _ -> false end)
+
+    success_count = length(successful)
+    fail_count = length(failed)
+
+    text = cond do
+      fail_count == 0 ->
+        file_list = Enum.map(successful, fn {:ok, path} -> "  ✓ #{path}" end) |> Enum.join("\n")
+        "Successfully moved #{success_count} file(s):\n#{file_list}"
+      success_count == 0 ->
+        error_details = Enum.map(failed, fn {:error, path, reason} ->
+          "  ✗ #{path}: #{reason}"
+        end) |> Enum.join("\n")
+        "Failed to move all files:\n#{error_details}"
+      true ->
+        success_list = Enum.map(successful, fn {:ok, path} -> "  ✓ #{path}" end) |> Enum.join("\n")
+        error_list = Enum.map(failed, fn {:error, path, reason} -> "  ✗ #{path}: #{reason}" end) |> Enum.join("\n")
+        "Moved #{success_count} file(s), #{fail_count} failed:\nSuccessful:\n#{success_list}\nFailed:\n#{error_list}"
+    end
+
+    if fail_count > 0 and success_count == 0 do
+      %{isError: true, content: [%{type: "text", text: text}]}
+    else
+      %{content: [%{type: "text", text: text}]}
     end
   end
 
