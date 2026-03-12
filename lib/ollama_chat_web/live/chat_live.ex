@@ -1398,7 +1398,7 @@ defmodule OllamaChatWeb.ChatLive do
         </div>
 
         <%!-- Main content (right column on wide screens) --%>
-        <div class="xl:flex-1 xl:min-w-0 flex flex-col max-h-[calc(100vh-4rem)]">
+        <div class="xl:flex-1 xl:min-w-0 flex flex-col h-[calc(100vh-4rem)]">
           <%!-- Status message display --%>
           <%= if @status_message do %>
             <div class={[
