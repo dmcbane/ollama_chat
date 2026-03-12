@@ -1485,9 +1485,9 @@ defmodule OllamaChatWeb.ChatLive do
 
           <%!-- Chat and input wrapper: Contains both the chat area (messages) and input area (compose) --%>
           <%!-- Layout: Chat area fills available space (flex-1), input area stays at bottom (flex-shrink-0) --%>
-          <div class="flex-1 flex flex-col min-h-0">
+          <div class="h-full flex flex-col">
             <%!-- Chat area: Scrollable message history (user and assistant messages) --%>
-            <div class="bg-slate-800/50 rounded-t-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-b-0 overflow-hidden flex flex-col flex-1 min-h-0">
+            <div class="bg-slate-800/50 rounded-t-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-b-0 overflow-hidden flex-1 flex flex-col">
               <div
                 id="messages-container"
                 phx-hook=".CopyMessage .ScrollToBottom"
@@ -1696,7 +1696,7 @@ defmodule OllamaChatWeb.ChatLive do
             <% end %>
 
             <%!-- Input area: Message composer with textarea, Attach and Send buttons --%>
-            <div class="bg-slate-800/50 rounded-b-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-t-0 p-4 flex-shrink-0">
+            <div class="bg-slate-800/50 rounded-b-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-t-0 p-4 flex-shrink-0 max-h-[300px] overflow-y-auto">
               <%!-- Context attachments display --%>
               <%= if length(@context_attachments) > 0 do %>
                 <div class="mb-3 p-3 bg-blue-900/20 rounded-lg border border-blue-700/50">
@@ -1807,7 +1807,7 @@ defmodule OllamaChatWeb.ChatLive do
                 <% end %>
 
                 <div class="flex gap-3 items-end">
-                  <div class="flex-1 max-w-full overflow-auto max-h-[500px] relative group">
+                  <div class="flex-1 max-w-full relative group">
                     <.input
                       field={@form[:message]}
                       type="textarea"
