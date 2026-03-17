@@ -39,3 +39,6 @@ npm-debug.log
 # Ignore Dialyzer PLT files
 /priv/plts/*.plt
 /priv/plts/*.plt.hash
+
+# Ignore environment file
+.env
