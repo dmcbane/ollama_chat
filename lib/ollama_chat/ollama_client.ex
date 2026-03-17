@@ -163,6 +163,20 @@ defmodule OllamaChat.OllamaClient do
   end
 
   @doc """
+  Returns whether an OLLAMA_KILL_COMMAND is configured.
+  """
+  def kill_command_configured? do
+    ollama_kill_command() != nil
+  end
+
+  @doc """
+  Returns the command to kill Ollama, or nil if not configured.
+  """
+  defp ollama_kill_command do
+    Application.get_env(:ollama_chat, :ollama_kill_command)
+  end
+
+  @doc """
   Attempts to start Ollama using the configured start command.
   Returns :ok on success, {:error, reason} on failure.
   """
@@ -202,7 +216,13 @@ defmodule OllamaChat.OllamaClient do
   def kill_ollama do
     Logger.info("Attempting to kill Ollama process")
 
-    case System.cmd("sh", ["-c", "pkill -9 ollama"], stderr_to_stdout: true) do
+    kill_command =
+      case ollama_kill_command() do
+        nil -> "pkill -9 ollama"
+        command -> command
+      end
+
+    case System.cmd("sh", ["-c", kill_command], stderr_to_stdout: true) do
       {_output, 0} ->
         Logger.info("Ollama process killed successfully")
         :ok
@@ -254,6 +274,10 @@ defmodule OllamaChat.OllamaClient do
 
   defp ollama_start_command do
     Application.get_env(:ollama_chat, :ollama_start_command)
+  end
+
+  defp ollama_kill_command do
+    Application.get_env(:ollama_chat, :ollama_kill_command)
   end
 
   defp wait_for_ollama_ready(max_seconds) do

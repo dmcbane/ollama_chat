@@ -56,6 +56,7 @@ The application can be configured using the following environment variables:
 | `OLLAMA_BASE_URL` | Base URL for the Ollama API | `http://localhost:11434` |
 | `OLLAMA_DEFAULT_MODEL` | Default LLM model to use | `llama3` |
 | `OLLAMA_START_COMMAND` | Command to start Ollama if not running | None |
+| `OLLAMA_KILL_COMMAND` | Command to stop Ollama (cross-platform) | `pkill -9 ollama` |
 | `OLLAMA_CHAT_PORT` | Port to run the Phoenix server on | `4000` |
 | `MCP_WORKSPACE` | Workspace directory for MCP test server filesystem operations | `~/mcp_workspace` |
 
@@ -84,6 +85,7 @@ Create a `.env` file in the project root (optional):
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_DEFAULT_MODEL=llama3
 OLLAMA_START_COMMAND="ollama serve"
+OLLAMA_KILL_COMMAND="pkill -9 ollama"
 
 # Phoenix Configuration
 OLLAMA_CHAT_PORT=4000
@@ -109,6 +111,41 @@ Or on macOS with Homebrew:
 
 ```bash
 export OLLAMA_START_COMMAND="brew services start ollama"
+mix phx.server
+```
+
+### Automatic Ollama Shutdown
+
+To enable automatic Ollama server shutdown across different environments, set the `OLLAMA_KILL_COMMAND` environment variable. This allows cross-platform compatibility with your kill strategy:
+
+**Default Behavior:** If not configured, uses `pkill -9 ollama` (Unix/Linux/macOS)
+
+**macOS/Linux Example:**
+```bash
+export OLLAMA_KILL_COMMAND="pkill -9 ollama"
+mix phx.server
+```
+
+**Alternative macOS approach using killall:**
+```bash
+export OLLAMA_KILL_COMMAND="killall ollama"
+mix phx.server
+```
+
+**Windows PowerShell Example:**
+```bash
+export OLLAMA_KILL_COMMAND="Stop-Process -Name ollama -Force"
+mix phx.server
+```
+
+**Windows CMD Example:**
+```bash
+set OLLAMA_KILL_COMMAND=taskkill /F /IM ollama.exe
+```
+
+**Docker Example:**
+```bash
+export OLLAMA_KILL_COMMAND="docker stop ollama && docker rm ollama"
 mix phx.server
 ```
 
