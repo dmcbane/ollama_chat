@@ -84,46 +84,75 @@ config :swoosh, :api_client, false
 # MCP (Model Context Protocol) Configuration for Development
 config :ollama_chat, :mcp_enabled, true
 
+mcpctl = Path.join([__DIR__, "..", "mcp_test_server", "mcpctl"]) |> Path.expand()
+
 config :ollama_chat, :mcp_servers, [
-  ## %{
-  ##   name: :filesystem,
-  ##   display_name: "File System (Dev)",
-  ##   description: "Read and write files in test workspace",
-  ##   command: "npx",
-  ##   args: ["-y", "@modelcontextprotocol/server-filesystem", Path.expand("./tmp/mcp_workspace")],
-  ##   enabled: false,
-  ##   # Auto-approve in dev for faster testing
-  ##   requires_approval: false,
-  ##   dangerous_tools: ["write_file", "create_directory", "move_file", "delete_file"]
-  ## },
+  # ── Filesystem ─────────────────────────────────────────────────────────────
+  # 17 tools: read/write/list/search files, batch copy/move/delete operations.
+  # Scoped to ~/mcp_workspace. Destructive operations require approval.
   %{
-    name: :everything,
-    display_name: "Everything (Demo)",
-    description: "Demo MCP server with various test tools",
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-everything"],
-    enabled: false,
-    requires_approval: false
-  },
-  %{
-    name: :elixir_test,
-    display_name: "Elixir MCP Server (No Node.js Required)",
-    description:
-      "Full-featured MCP server: filesystem operations, memory store, utilities - 19 tools total",
-    command: Path.join([__DIR__, "..", "mcp_test_server", "start_clean.sh"]) |> Path.expand(),
-    args: [],
-    working_dir: Path.join([__DIR__, "..", "mcp_test_server"]) |> Path.expand(),
-    env: %{
-      "MCP_WORKSPACE" => Path.expand("~/mcp_workspace")
-    },
+    name: :mcp_filesystem,
+    display_name: "MCP Filesystem",
+    description: "File operations within the MCP workspace (17 tools)",
+    command: mcpctl,
+    args: ["filesystem"],
     enabled: true,
     requires_approval: false,
     dangerous_tools: [
       "write_file",
       "create_directory",
       "move_file",
+      "copy_file",
       "delete_file",
-      "delete_directory"
+      "delete_directory",
+      "delete_files",
+      "delete_directories",
+      "delete_files_by_pattern",
+      "delete_directories_by_pattern",
+      "move_files",
+      "copy_files"
     ]
+  },
+
+  # ── Memory ─────────────────────────────────────────────────────────────────
+  # 4 tools: memory_set, memory_get, memory_delete, memory_list.
+  # In-memory KV store with optional TTL. Scoped to server process lifetime.
+  %{
+    name: :mcp_memory,
+    display_name: "MCP Memory",
+    description: "In-memory key/value store with optional TTL (4 tools)",
+    command: mcpctl,
+    args: ["memory"],
+    enabled: true,
+    requires_approval: false,
+    dangerous_tools: []
+  },
+
+  # ── System ─────────────────────────────────────────────────────────────────
+  # 12 tools: BEAM VM monitoring (memory, processes, schedulers, ETS, apps),
+  # environment variable inspection, and general utilities (echo, time, hash).
+  %{
+    name: :mcp_system,
+    display_name: "MCP System",
+    description: "BEAM monitoring, environment variables, and utilities (12 tools)",
+    command: mcpctl,
+    args: ["system"],
+    enabled: true,
+    requires_approval: false,
+    # Env inspection can expose secrets; require approval for those tools
+    dangerous_tools: ["list_env", "get_env"]
+  },
+
+  # ── Web ────────────────────────────────────────────────────────────────────
+  # 1 tool: web_search via DuckDuckGo Instant Answer API (no API key required).
+  %{
+    name: :mcp_web,
+    display_name: "MCP Web",
+    description: "Web search via DuckDuckGo Instant Answers (1 tool)",
+    command: mcpctl,
+    args: ["web"],
+    enabled: true,
+    requires_approval: false,
+    dangerous_tools: []
   }
 ]
