@@ -161,69 +161,6 @@ defmodule OllamaChat.MCPClient do
   end
 
   @impl true
-  def handle_call(:list_tools, _from, state) do
-    {:reply, {:ok, state.tools}, state}
-  end
-
-  @impl true
-  def handle_call({:call_tool, tool_name, args}, _from, state) do
-    result = execute_tool(tool_name, args, state)
-    {:reply, result, state}
-  end
-
-  @impl true
-  def handle_call(:health_status, _from, state) do
-    status =
-      state.clients
-      |> Enum.map(fn {name, client_info} ->
-        {name,
-         %{
-           status: client_info.status,
-           display_name: client_info.config.display_name,
-           last_check: client_info.last_health_check
-         }}
-      end)
-      |> Enum.into(%{})
-
-    {:reply, status, state}
-  end
-
-  @impl true
-  def handle_call(:server_info, _from, state) do
-    info =
-      state.clients
-      |> Enum.map(fn {name, client_info} ->
-        {name,
-         %{
-           status: client_info.status,
-           display_name: client_info.config.display_name,
-           last_check: client_info.last_health_check,
-           restart_count: client_info.restart_count,
-           pid: inspect(client_info.pid)
-         }}
-      end)
-      |> Enum.into(%{})
-
-    # Add info about servers scheduled for restart
-    restart_info =
-      state.restart_timers
-      |> Enum.map(fn {name, _ref} ->
-        {name, %{status: :restarting}}
-      end)
-      |> Enum.into(%{})
-
-    combined = Map.merge(restart_info, info)
-
-    {:reply, combined, state}
-  end
-
-  @impl true
-  def handle_cast(:refresh_tools, state) do
-    send(self(), :discover_tools)
-    {:noreply, state}
-  end
-
-  @impl true
   def handle_info({:EXIT, pid, reason}, state) do
     # Find which server crashed
     case find_server_by_pid(state.clients, pid) do
@@ -326,6 +263,69 @@ defmodule OllamaChat.MCPClient do
           end
         end
     end
+  end
+
+  @impl true
+  def handle_call(:list_tools, _from, state) do
+    {:reply, {:ok, state.tools}, state}
+  end
+
+  @impl true
+  def handle_call({:call_tool, tool_name, args}, _from, state) do
+    result = execute_tool(tool_name, args, state)
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call(:health_status, _from, state) do
+    status =
+      state.clients
+      |> Enum.map(fn {name, client_info} ->
+        {name,
+         %{
+           status: client_info.status,
+           display_name: client_info.config.display_name,
+           last_check: client_info.last_health_check
+         }}
+      end)
+      |> Enum.into(%{})
+
+    {:reply, status, state}
+  end
+
+  @impl true
+  def handle_call(:server_info, _from, state) do
+    info =
+      state.clients
+      |> Enum.map(fn {name, client_info} ->
+        {name,
+         %{
+           status: client_info.status,
+           display_name: client_info.config.display_name,
+           last_check: client_info.last_health_check,
+           restart_count: client_info.restart_count,
+           pid: inspect(client_info.pid)
+         }}
+      end)
+      |> Enum.into(%{})
+
+    # Add info about servers scheduled for restart
+    restart_info =
+      state.restart_timers
+      |> Enum.map(fn {name, _ref} ->
+        {name, %{status: :restarting}}
+      end)
+      |> Enum.into(%{})
+
+    combined = Map.merge(restart_info, info)
+
+    {:reply, combined, state}
+  end
+
+  @impl true
+  def handle_cast(:refresh_tools, state) do
+    send(self(), :discover_tools)
+    {:noreply, state}
   end
 
   # Private Functions

@@ -39,6 +39,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:streaming_events, [])
       |> assign(:activity_expanded, false)
       |> assign(:streaming_message_id, nil)
+      |> assign(:streaming_model, Application.get_env(:ollama_chat, :ollama_default_model, "llama3"))
       |> assign(:messages_empty?, true)
       |> assign(:form, to_form(%{"message" => ""}))
       |> assign(:message_history, [])
@@ -233,7 +234,8 @@ defmodule OllamaChatWeb.ChatLive do
         html_content: nil,
         timestamp: DateTime.utc_now(),
         streaming: true,
-        intermediate_events: []
+        intermediate_events: [],
+        model: socket.assigns.selected_model
       }
 
       # Build conversation history
@@ -241,7 +243,12 @@ defmodule OllamaChatWeb.ChatLive do
         [user_message | socket.assigns.message_history]
         |> Enum.reverse()
         |> Enum.map(fn msg ->
-          %{role: msg.role, content: msg.content}
+          # message_history can contain atom-keyed maps (created this session)
+          # or string-keyed maps (loaded from a saved conversation via localStorage JSON)
+          %{
+            role: msg[:role] || msg["role"],
+            content: msg[:content] || msg["content"]
+          }
         end)
 
       # Build system prompt (MCP-aware if tools available)
@@ -278,6 +285,7 @@ defmodule OllamaChatWeb.ChatLive do
         |> assign(:streaming_events, [])
         |> assign(:activity_expanded, false)
         |> assign(:streaming_message_id, assistant_message_id)
+        |> assign(:streaming_model, socket.assigns.selected_model)
         |> assign(:messages_empty?, false)
         |> assign(:message_history, [user_message | socket.assigns.message_history])
         |> assign(:attachments, [])
@@ -318,7 +326,21 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_event("select_model", %{"model" => model}, socket) do
+    Logger.debug("Model selected: #{inspect(model)} (was: #{inspect(socket.assigns.selected_model)})")
+    socket = push_event(socket, "save_model_preference", %{model: model})
     {:noreply, assign(socket, :selected_model, model)}
+  end
+
+  @impl true
+  def handle_event("model_preference_loaded", %{"model" => saved_model}, socket) do
+    selected =
+      if saved_model in socket.assigns.available_models do
+        saved_model
+      else
+        socket.assigns.selected_model
+      end
+
+    {:noreply, assign(socket, :selected_model, selected)}
   end
 
   @impl true
@@ -342,7 +364,7 @@ defmodule OllamaChatWeb.ChatLive do
       socket
       |> stream(:messages, [], reset: true)
       |> assign(:current_conversation_id, conversation["id"])
-      |> assign(:selected_model, conversation["model"])
+      |> assign(:selected_model, conversation["model"] || socket.assigns.selected_model)
       |> assign(:message_history, messages)
       |> assign(:messages_empty?, messages == [])
       |> assign(:system_prompt, conversation["system_prompt"] || "")
@@ -350,6 +372,8 @@ defmodule OllamaChatWeb.ChatLive do
         :generation_params,
         restore_generation_params(conversation["generation_params"])
       )
+
+    socket = push_event(socket, "save_model_preference", %{model: socket.assigns.selected_model})
 
     # Stream all messages, rendering markdown for assistant messages
     socket =
@@ -555,6 +579,74 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("approve_tool", _params, socket) do
+    case socket.assigns.pending_approval do
+      nil ->
+        {:noreply, socket}
+
+      approval ->
+        Logger.info("User approved tool: #{approval.tool_name}")
+
+        socket =
+          socket
+          |> assign(:pending_approval, nil)
+          |> execute_mcp_tool(
+            approval.message_id,
+            approval.tool_name,
+            approval.args
+          )
+
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_tool_approval", _params, socket) do
+    Logger.info("User cancelled tool execution")
+
+    socket =
+      socket
+      |> assign(:pending_approval, nil)
+      |> assign(:error, "Tool execution cancelled by user")
+      |> assign(:loading, false)
+      |> assign(:streaming_pid, nil)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_mcp_settings", _params, socket) do
+    # Refresh status when opening the panel
+    socket =
+      if socket.assigns.mcp_enabled? and not socket.assigns.show_mcp_settings do
+        server_status = MCPClient.server_info()
+        assign(socket, :mcp_server_status, server_status)
+      else
+        socket
+      end
+
+    {:noreply, assign(socket, :show_mcp_settings, !socket.assigns.show_mcp_settings)}
+  end
+
+  @impl true
+  def handle_event("toggle_storage_settings", _params, socket) do
+    {:noreply, assign(socket, :show_storage_settings, !socket.assigns.show_storage_settings)}
+  end
+
+  @impl true
+  def handle_event("toggle_save_intermediate_events", _params, socket) do
+    new_value = !socket.assigns.save_intermediate_events
+    socket = assign(socket, :save_intermediate_events, new_value)
+    # Push to localStorage via JavaScript hook
+    {:noreply, push_event(socket, "save_preference", %{save_intermediate_events: new_value})}
+  end
+
+  @impl true
+  def handle_event("preference_loaded", %{"save_intermediate_events" => value}, socket) do
+    {:noreply, assign(socket, :save_intermediate_events, value)}
+  end
+
+  @impl true
   def handle_info(:check_ollama_status, socket) do
     status = if OllamaClient.ollama_running?(), do: :running, else: :stopped
 
@@ -565,10 +657,13 @@ defmodule OllamaChatWeb.ChatLive do
   def handle_info(:load_models, socket) do
     case OllamaClient.list_models() do
       {:ok, models} when models != [] ->
+        current_model = socket.assigns.selected_model
+        selected = if current_model in models, do: current_model, else: List.first(models)
+
         {:noreply,
          socket
          |> assign(:available_models, models)
-         |> assign(:selected_model, List.first(models))
+         |> assign(:selected_model, selected)
          |> assign(:ollama_status, :running)}
 
       {:ok, []} ->
@@ -607,56 +702,6 @@ defmodule OllamaChatWeb.ChatLive do
     end
   end
 
-  defp stream_normal_chunk(socket, message_id, new_content) do
-    # Capture intermediate events for collapsible container
-    current_events = socket.assigns.streaming_events
-
-    # Add current content as a streaming event (only if content changed)
-    last_event = List.last(current_events)
-
-    should_add =
-      current_events == [] or
-        (last_event && last_event.type == :chunk && last_event.content != new_content) or
-        (last_event && last_event.type != :chunk)
-
-    updated_events =
-      if should_add do
-        current_events ++ [%{type: :chunk, content: new_content, timestamp: DateTime.utc_now()}]
-      else
-        current_events
-      end
-
-    Logger.debug(
-      "Streaming: message_id=#{message_id}, events=#{length(updated_events)}, content_length=#{String.length(new_content)}"
-    )
-
-    # Update the streaming message
-    updated_message = %{
-      id: message_id,
-      role: "assistant",
-      content: new_content,
-      html_content: nil,
-      timestamp: DateTime.utc_now(),
-      streaming: true,
-      intermediate_events: []
-    }
-
-    # Reset stream timeout on each chunk
-    cancel_stream_timeout(socket.assigns.stream_timeout_ref)
-
-    timeout_ref =
-      Process.send_after(self(), {:stream_timeout, message_id}, stream_timeout_ms())
-
-    socket =
-      socket
-      |> stream_insert(:messages, updated_message)
-      |> assign(:streaming_message, new_content)
-      |> assign(:streaming_events, updated_events)
-      |> assign(:stream_timeout_ref, timeout_ref)
-
-    {:noreply, socket}
-  end
-
   @impl true
   def handle_info({:stream_done, message_id}, socket) do
     # Cancel stream timeout
@@ -682,7 +727,8 @@ defmodule OllamaChatWeb.ChatLive do
       html_content: Markdown.render_to_string(raw_content),
       timestamp: DateTime.utc_now(),
       streaming: false,
-      intermediate_events: if(socket.assigns.save_intermediate_events, do: intermediate, else: [])
+      intermediate_events: if(socket.assigns.save_intermediate_events, do: intermediate, else: []),
+      model: socket.assigns.streaming_model
     }
 
     updated_history = [final_message | socket.assigns.message_history]
@@ -767,29 +813,6 @@ defmodule OllamaChatWeb.ChatLive do
       spawn(fn -> attempt_ollama_recovery(parent) end)
 
       {:noreply, socket}
-    end
-  end
-
-  defp attempt_ollama_recovery(parent) do
-    case OllamaClient.start_ollama() do
-      :ok ->
-        handle_successful_ollama_start(parent)
-
-      {:error, reason} ->
-        send(parent, {:recovery_failed, reason})
-    end
-  end
-
-  defp handle_successful_ollama_start(parent) do
-    send(parent, {:recovery_progress, :waiting})
-    Process.sleep(2000)
-
-    if OllamaClient.ollama_running?() do
-      send(parent, {:recovery_progress, :loading_models})
-      Process.sleep(500)
-      send(parent, :recovery_complete)
-    else
-      send(parent, {:recovery_failed, "Ollama started but not responding"})
     end
   end
 
@@ -946,74 +969,6 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
-  def handle_event("approve_tool", _params, socket) do
-    case socket.assigns.pending_approval do
-      nil ->
-        {:noreply, socket}
-
-      approval ->
-        Logger.info("User approved tool: #{approval.tool_name}")
-
-        socket =
-          socket
-          |> assign(:pending_approval, nil)
-          |> execute_mcp_tool(
-            approval.message_id,
-            approval.tool_name,
-            approval.args
-          )
-
-        {:noreply, socket}
-    end
-  end
-
-  @impl true
-  def handle_event("cancel_tool_approval", _params, socket) do
-    Logger.info("User cancelled tool execution")
-
-    socket =
-      socket
-      |> assign(:pending_approval, nil)
-      |> assign(:error, "Tool execution cancelled by user")
-      |> assign(:loading, false)
-      |> assign(:streaming_pid, nil)
-
-    {:noreply, socket}
-  end
-
-  @impl true
-  def handle_event("toggle_mcp_settings", _params, socket) do
-    # Refresh status when opening the panel
-    socket =
-      if socket.assigns.mcp_enabled? and not socket.assigns.show_mcp_settings do
-        server_status = MCPClient.server_info()
-        assign(socket, :mcp_server_status, server_status)
-      else
-        socket
-      end
-
-    {:noreply, assign(socket, :show_mcp_settings, !socket.assigns.show_mcp_settings)}
-  end
-
-  @impl true
-  def handle_event("toggle_storage_settings", _params, socket) do
-    {:noreply, assign(socket, :show_storage_settings, !socket.assigns.show_storage_settings)}
-  end
-
-  @impl true
-  def handle_event("toggle_save_intermediate_events", _params, socket) do
-    new_value = !socket.assigns.save_intermediate_events
-    socket = assign(socket, :save_intermediate_events, new_value)
-    # Push to localStorage via JavaScript hook
-    {:noreply, push_event(socket, "save_preference", %{save_intermediate_events: new_value})}
-  end
-
-  @impl true
-  def handle_event("preference_loaded", %{"save_intermediate_events" => value}, socket) do
-    {:noreply, assign(socket, :save_intermediate_events, value)}
-  end
-
-  @impl true
   def handle_info(:refresh_mcp_status, socket) do
     if socket.assigns.mcp_enabled? do
       server_status = MCPClient.server_info()
@@ -1066,6 +1021,80 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_info(:clear_status, socket) do
     {:noreply, assign(socket, :status_message, nil)}
+  end
+
+  defp stream_normal_chunk(socket, message_id, new_content) do
+    # Capture intermediate events for collapsible container
+    current_events = socket.assigns.streaming_events
+
+    # Add current content as a streaming event (only if content changed)
+    last_event = List.last(current_events)
+
+    should_add =
+      current_events == [] or
+        (last_event && last_event.type == :chunk && last_event.content != new_content) or
+        (last_event && last_event.type != :chunk)
+
+    updated_events =
+      if should_add do
+        current_events ++ [%{type: :chunk, content: new_content, timestamp: DateTime.utc_now()}]
+      else
+        current_events
+      end
+
+    Logger.debug(
+      "Streaming: message_id=#{message_id}, events=#{length(updated_events)}, content_length=#{String.length(new_content)}"
+    )
+
+    # Update the streaming message
+    updated_message = %{
+      id: message_id,
+      role: "assistant",
+      content: new_content,
+      html_content: nil,
+      timestamp: DateTime.utc_now(),
+      streaming: true,
+      intermediate_events: [],
+      model: socket.assigns.streaming_model
+    }
+
+    # Reset stream timeout on each chunk
+    cancel_stream_timeout(socket.assigns.stream_timeout_ref)
+
+    timeout_ref =
+      Process.send_after(self(), {:stream_timeout, message_id}, stream_timeout_ms())
+
+    socket =
+      socket
+      |> stream_insert(:messages, updated_message)
+      |> assign(:streaming_message, new_content)
+      |> assign(:streaming_events, updated_events)
+      |> assign(:stream_timeout_ref, timeout_ref)
+
+    {:noreply, socket}
+  end
+
+  defp attempt_ollama_recovery(parent) do
+    case OllamaClient.start_ollama() do
+      :ok ->
+        handle_successful_ollama_start(parent)
+
+      {:error, reason} ->
+        send(parent, {:recovery_failed, reason})
+    end
+  end
+
+  defp handle_successful_ollama_start(parent) do
+    send(parent, {:recovery_progress, :waiting})
+    Process.sleep(2000)
+
+    if OllamaClient.ollama_running?() do
+      send(parent, {:recovery_progress, :loading_models})
+      Process.sleep(500)
+      send(parent, :recovery_complete)
+    else
+      send(parent, {:recovery_failed, "Ollama started but not responding"})
+    end
   end
 
   @impl true
@@ -1126,8 +1155,9 @@ defmodule OllamaChatWeb.ChatLive do
             <div class="mb-4">
               <label class="text-sm text-gray-300 mb-1 block">Model</label>
               <select
+                id="model-select"
                 class="w-full bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                phx-change="select_model"
+                phx-hook=".ModelSelector"
                 name="model"
               >
                 <option
@@ -1814,6 +1844,12 @@ defmodule OllamaChatWeb.ChatLive do
                               <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
                             <% else %>
                               <div class="prose-chat">{raw(message.html_content)}</div>
+                              <%= if message[:model] do %>
+                                <div class="mt-2 pt-2 border-t border-slate-700/50 flex items-center gap-1">
+                                  <.icon name="hero-cpu-chip" class="w-3 h-3 text-slate-500" />
+                                  <span class="text-xs text-slate-500 font-mono">{message[:model]}</span>
+                                </div>
+                              <% end %>
                               <button
                                 type="button"
                                 class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
@@ -2451,6 +2487,74 @@ defmodule OllamaChatWeb.ChatLive do
             hour: 'numeric',
             minute: '2-digit'
           });
+        }
+      }
+    </script>
+
+    <%!-- Model Selector hook for localStorage persistence --%>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".ModelSelector">
+      export default {
+        storageKey: "ollama_chat_selected_model",
+
+        mounted() {
+          // Track a pending (user-initiated) model change that hasn't yet been
+          // confirmed by the server. While pendingValue is set, updated() must
+          // not re-assert the server's old selection and overwrite the user's choice.
+          this.pendingValue = null;
+
+          const saved = localStorage.getItem(this.storageKey);
+          if (saved) {
+            this.pushEvent("model_preference_loaded", { model: saved });
+          }
+
+          // When the user changes the dropdown:
+          // 1. Record their intent so updated() won't revert while the round-trip is in flight.
+          // 2. Push the model change event explicitly instead of relying on phx-change,
+          //    so the event source is always clear and controllable from one place.
+          this.el.addEventListener("change", () => {
+            this.pendingValue = this.el.value;
+            this.pushEvent("select_model", { model: this.el.value });
+          });
+
+          // Server pushes save_model_preference after processing select_model —
+          // but also after conversation_loaded (for a different model).
+          // Only clear pendingValue when the server confirms OUR specific pending
+          // selection. If the confirmation is for a different model (e.g. the
+          // conversation's model), preserve pendingValue so updated() won't revert.
+          this.handleEvent("save_model_preference", ({ model }) => {
+            try {
+              localStorage.setItem(this.storageKey, model);
+              if (this.pendingValue === null || model === this.pendingValue) {
+                this.pendingValue = null;
+              }
+            } catch (e) {
+              console.error("Failed to save model preference:", e);
+            }
+          });
+        },
+
+        updated() {
+          // If the user just changed the model and we're waiting for server
+          // confirmation, don't re-assert the server's stale selection.
+          if (this.pendingValue !== null) {
+            // Once the server's selected attribute catches up with our pending
+            // value we can safely clear it (save_model_preference already did,
+            // but this handles the edge case where the event races ahead of the
+            // attribute diff).
+            const confirmed = Array.from(this.el.options).find(
+              opt => opt.hasAttribute("selected") && opt.value === this.pendingValue
+            );
+            if (confirmed) this.pendingValue = null;
+            return;
+          }
+
+          // Some browsers reset select elements when nearby DOM changes occur
+          // (e.g. form state restoration after morphdom patches the chat form).
+          // Re-assert the server's intended selection from the `selected` attribute.
+          const intended = Array.from(this.el.options).find(opt => opt.hasAttribute("selected"));
+          if (intended && this.el.value !== intended.value) {
+            this.el.value = intended.value;
+          }
         }
       }
     </script>

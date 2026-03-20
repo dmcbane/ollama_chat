@@ -170,13 +170,6 @@ defmodule OllamaChat.OllamaClient do
   end
 
   @doc """
-  Returns the command to kill Ollama, or nil if not configured.
-  """
-  defp ollama_kill_command do
-    Application.get_env(:ollama_chat, :ollama_kill_command)
-  end
-
-  @doc """
   Attempts to start Ollama using the configured start command.
   Returns :ok on success, {:error, reason} on failure.
   """
