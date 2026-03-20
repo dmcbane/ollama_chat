@@ -28,6 +28,11 @@ mcp_test_server-*.tar
 # Ignore workspace directory
 /tmp/mcp_workspace/
 
+# mcpctl runtime directories
+/.pids/
+/.logs/
+/.fifos/
+
 # Editor/IDE files
 .vscode/
 .idea/
