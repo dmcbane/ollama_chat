@@ -2,13 +2,13 @@
 # MCP Server management script
 #
 # DIRECT STDIO TRANSPORT  (used in MCP client config — stdout stays clean JSON-RPC)
-#   ./start_clean.sh [filesystem|memory|system|web]
+#   ./mcpctl [filesystem|memory|system|web]
 #
 # BACKGROUND MANAGEMENT
-#   ./start_clean.sh status                   show all servers
-#   ./start_clean.sh start  <server|all>      start in background
-#   ./start_clean.sh stop   <server|all>      stop background instance
-#   ./start_clean.sh restart <server|all>     stop then start
+#   ./mcpctl status                   show all servers
+#   ./mcpctl start  <server|all>      start in background
+#   ./mcpctl stop   <server|all>      stop background instance
+#   ./mcpctl restart <server|all>     stop then start
 #
 # SERVERS
 #   filesystem  17 file operation tools (default)
@@ -210,13 +210,13 @@ case "$COMMAND" in
     echo "  ${BOLD}MCP Server Manager${NC}"
     echo ""
     printf "  ${BOLD}Management commands:${NC}\n"
-    printf "    %-38s %s\n" "./start_clean.sh status"            "show status of all servers"
-    printf "    %-38s %s\n" "./start_clean.sh start  [server|all]" "start in background"
-    printf "    %-38s %s\n" "./start_clean.sh stop   [server|all]" "stop background instance"
-    printf "    %-38s %s\n" "./start_clean.sh restart [server|all]" "stop then start"
+    printf "    %-38s %s\n" "./mcpctl status"            "show status of all servers"
+    printf "    %-38s %s\n" "./mcpctl start  [server|all]" "start in background"
+    printf "    %-38s %s\n" "./mcpctl stop   [server|all]" "stop background instance"
+    printf "    %-38s %s\n" "./mcpctl restart [server|all]" "stop then start"
     echo ""
     printf "  ${BOLD}Direct stdio transport (for MCP client config):${NC}\n"
-    printf "    %-38s %s\n" "./start_clean.sh [server]" "stdout = JSON-RPC only"
+    printf "    %-38s %s\n" "./mcpctl [server]" "stdout = JSON-RPC only"
     echo ""
     printf "  ${BOLD}Servers:${NC}  filesystem  memory  system  web\n"
     echo ""
