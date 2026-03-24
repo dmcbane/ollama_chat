@@ -39,7 +39,10 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:streaming_events, [])
       |> assign(:activity_expanded, false)
       |> assign(:streaming_message_id, nil)
-      |> assign(:streaming_model, Application.get_env(:ollama_chat, :ollama_default_model, "llama3"))
+      |> assign(
+        :streaming_model,
+        Application.get_env(:ollama_chat, :ollama_default_model, "llama3")
+      )
       |> assign(:messages_empty?, true)
       |> assign(:form, to_form(%{"message" => ""}))
       |> assign(:message_history, [])
@@ -62,6 +65,9 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:show_mcp_settings, false)
       |> assign(:show_storage_settings, false)
       |> assign(:save_intermediate_events, false)
+      |> assign(:health_check_enabled, OllamaClient.health_check_enabled?())
+      |> assign(:health_check_healthy, true)
+      |> assign(:health_check_timer, nil)
       |> assign(:streaming_pid, nil)
       |> assign(:attachments, [])
       |> assign(:context_attachments, [])
@@ -99,10 +105,21 @@ defmodule OllamaChatWeb.ChatLive do
         socket
       end
 
-    if connected?(socket) do
-      send(self(), :check_ollama_status)
-      send(self(), :load_models)
-    end
+    socket =
+      if connected?(socket) do
+        send(self(), :check_ollama_status)
+        send(self(), :load_models)
+
+        # Schedule health checks independently of MCP
+        if OllamaClient.health_check_enabled?() do
+          timer = Process.send_after(self(), :health_check, OllamaClient.health_check_interval())
+          assign(socket, :health_check_timer, timer)
+        else
+          socket
+        end
+      else
+        socket
+      end
 
     {:ok, socket}
   end
@@ -326,7 +343,10 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_event("select_model", %{"model" => model}, socket) do
-    Logger.debug("Model selected: #{inspect(model)} (was: #{inspect(socket.assigns.selected_model)})")
+    Logger.debug(
+      "Model selected: #{inspect(model)} (was: #{inspect(socket.assigns.selected_model)})"
+    )
+
     socket = push_event(socket, "save_model_preference", %{model: model})
     {:noreply, assign(socket, :selected_model, model)}
   end
@@ -727,7 +747,8 @@ defmodule OllamaChatWeb.ChatLive do
       html_content: Markdown.render_to_string(raw_content),
       timestamp: DateTime.utc_now(),
       streaming: false,
-      intermediate_events: if(socket.assigns.save_intermediate_events, do: intermediate, else: []),
+      intermediate_events:
+        if(socket.assigns.save_intermediate_events, do: intermediate, else: []),
       model: socket.assigns.streaming_model
     }
 
@@ -983,6 +1004,28 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_info(:health_check, socket) do
+    healthy = OllamaClient.ollama_running?()
+    was_healthy = socket.assigns.health_check_healthy
+
+    if was_healthy and not healthy do
+      Logger.warning("Health check: Ollama became unreachable")
+    end
+
+    if not was_healthy and healthy do
+      Logger.info("Health check: Ollama is reachable again")
+    end
+
+    # Schedule next check
+    timer = Process.send_after(self(), :health_check, OllamaClient.health_check_interval())
+
+    {:noreply,
+     socket
+     |> assign(:health_check_healthy, healthy)
+     |> assign(:health_check_timer, timer)}
+  end
+
+  @impl true
   def handle_info(:clear_recovery_status, socket) do
     {:noreply,
      socket
@@ -1168,6 +1211,24 @@ defmodule OllamaChatWeb.ChatLive do
                   {model}
                 </option>
               </select>
+            </div>
+          <% end %>
+
+          <%!-- Health Check Status --%>
+          <%= if @health_check_enabled do %>
+            <div class="mb-4">
+              <label class="text-sm text-gray-300 mb-1 block">Health Check Status</label>
+              <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+                <div class="px-3 py-2 flex items-center justify-between">
+                  <span class="text-xs">
+                    <%= if @health_check_healthy do %>
+                      <span class="text-green-400">● Healthy</span>
+                    <% else %>
+                      <span class="text-red-400">● Unreachable</span>
+                    <% end %>
+                  </span>
+                </div>
+              </div>
             </div>
           <% end %>
 
@@ -1847,7 +1908,9 @@ defmodule OllamaChatWeb.ChatLive do
                               <%= if message[:model] do %>
                                 <div class="mt-2 pt-2 border-t border-slate-700/50 flex items-center gap-1">
                                   <.icon name="hero-cpu-chip" class="w-3 h-3 text-slate-500" />
-                                  <span class="text-xs text-slate-500 font-mono">{message[:model]}</span>
+                                  <span class="text-xs text-slate-500 font-mono">
+                                    {message[:model]}
+                                  </span>
                                 </div>
                               <% end %>
                               <button

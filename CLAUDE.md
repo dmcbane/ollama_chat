@@ -32,7 +32,7 @@ mix compile --warnings-as-errors    # Check for warnings
 
 **Error recovery:** Connection failures trigger `ensure_ollama_running/0` which can auto-start Ollama, then retry with a 2-second delay.
 
-**Environment variables** (see `.env.example`): `OLLAMA_BASE_URL`, `OLLAMA_DEFAULT_MODEL`, `OLLAMA_START_COMMAND`, `OLLAMA_KILL_COMMAND`, `OLLAMA_CHAT_PORT`
+**Environment variables** (see `.env.example`): `OLLAMA_BASE_URL`, `OLLAMA_DEFAULT_MODEL`, `OLLAMA_START_COMMAND`, `OLLAMA_KILL_COMMAND`, `OLLAMA_CHAT_PORT`, `OLLAMA_HEALTH_CHECK_ENABLED`, `OLLAMA_HEALTH_CHECK_INTERVAL_MS`
 
 ## Development Guidelines
 

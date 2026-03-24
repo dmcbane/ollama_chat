@@ -28,7 +28,11 @@ config :ollama_chat,
   ollama_base_url: System.get_env("OLLAMA_BASE_URL", "http://localhost:11434"),
   ollama_default_model: System.get_env("OLLAMA_DEFAULT_MODEL", "llama3"),
   ollama_start_command: System.get_env("OLLAMA_START_COMMAND"),
-  stream_timeout_ms: String.to_integer(System.get_env("OLLAMA_STREAM_TIMEOUT_MS", "30000"))
+  ollama_kill_command: System.get_env("OLLAMA_KILL_COMMAND"),
+  stream_timeout_ms: String.to_integer(System.get_env("OLLAMA_STREAM_TIMEOUT_MS", "30000")),
+  health_check_enabled: System.get_env("OLLAMA_HEALTH_CHECK_ENABLED", "true") == "true",
+  health_check_interval:
+    String.to_integer(System.get_env("OLLAMA_HEALTH_CHECK_INTERVAL_MS", "30000"))
 
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.

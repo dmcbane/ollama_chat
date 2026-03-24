@@ -156,3 +156,8 @@ config :ollama_chat, :mcp_servers, [
     dangerous_tools: []
   }
 ]
+
+# Health Check Configuration (overridable via OLLAMA_HEALTH_CHECK_* env vars in runtime.exs)
+config :ollama_chat,
+  health_check_enabled: true,
+  health_check_interval: 30_000

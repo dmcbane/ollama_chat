@@ -170,6 +170,22 @@ defmodule OllamaChat.OllamaClient do
   end
 
   @doc """
+  Returns whether health check monitoring is enabled.
+  Reads from :health_check_enabled config, defaults to true.
+  """
+  def health_check_enabled? do
+    Application.get_env(:ollama_chat, :health_check_enabled, true)
+  end
+
+  @doc """
+  Returns the configured health check interval in milliseconds.
+  Reads from :health_check_interval config, defaults to 30_000 (30 seconds).
+  """
+  def health_check_interval do
+    Application.get_env(:ollama_chat, :health_check_interval, 30_000)
+  end
+
+  @doc """
   Attempts to start Ollama using the configured start command.
   Returns :ok on success, {:error, reason} on failure.
   """

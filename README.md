@@ -58,6 +58,8 @@ The application can be configured using the following environment variables:
 | `OLLAMA_START_COMMAND` | Command to start Ollama if not running | None |
 | `OLLAMA_KILL_COMMAND` | Command to stop Ollama (cross-platform) | `pkill -9 ollama` |
 | `OLLAMA_CHAT_PORT` | Port to run the Phoenix server on | `4000` |
+| `OLLAMA_HEALTH_CHECK_ENABLED` | Enable periodic Ollama health monitoring | `true` |
+| `OLLAMA_HEALTH_CHECK_INTERVAL_MS` | Health check polling interval in milliseconds | `30000` |
 | `MCP_WORKSPACE` | Workspace directory for MCP test server filesystem operations | `~/mcp_workspace` |
 
 ### Port Configuration
@@ -86,6 +88,8 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_DEFAULT_MODEL=llama3
 OLLAMA_START_COMMAND="ollama serve"
 OLLAMA_KILL_COMMAND="pkill -9 ollama"
+OLLAMA_HEALTH_CHECK_ENABLED=true
+OLLAMA_HEALTH_CHECK_INTERVAL_MS=30000
 
 # Phoenix Configuration
 OLLAMA_CHAT_PORT=4000
