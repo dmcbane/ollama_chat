@@ -994,6 +994,17 @@ defmodule OllamaChatWeb.ChatLive do
     if socket.assigns.mcp_enabled? do
       server_status = MCPClient.server_info()
 
+      # Also refresh tools in case they weren't available at mount time
+      # (tool discovery runs ~1s after server startup)
+      socket =
+        case MCPClient.list_tools() do
+          {:ok, tools} when tools != %{} ->
+            assign(socket, :mcp_tools, tools)
+
+          _ ->
+            socket
+        end
+
       # Schedule next update
       Process.send_after(self(), :refresh_mcp_status, 10_000)
 

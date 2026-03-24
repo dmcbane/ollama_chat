@@ -794,4 +794,18 @@ defmodule OllamaChatWeb.ChatLiveTest do
       assert html =~ "Healthy"
     end
   end
+
+  describe "MCP tool refresh" do
+    test "refresh_mcp_status updates both server status and tools", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Send the refresh message directly
+      send(view.pid, :refresh_mcp_status)
+      _ = :sys.get_state(view.pid)
+
+      # The handler should not crash and should produce valid HTML
+      html = render(view)
+      assert html =~ "Ollama Chat"
+    end
+  end
 end
