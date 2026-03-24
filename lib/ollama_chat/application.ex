@@ -40,7 +40,7 @@ defmodule OllamaChat.Application do
     ollama_uri = URI.parse(ollama_url)
     ollama_scheme = String.to_atom(ollama_uri.scheme || "http")
     ollama_host = ollama_uri.host || "localhost"
-    ollama_port = ollama_uri.port || 11434
+    ollama_port = ollama_uri.port || 11_434
 
     # Build Finch pools dynamically to support runtime configuration
     # In Finch 0.21.0+, use URL strings as pool keys

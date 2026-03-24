@@ -3004,13 +3004,13 @@ defmodule OllamaChatWeb.ChatLive do
 
   defp has_intermediate_events?(message, streaming_message_id, streaming_events) do
     cond do
-      # During streaming: check live streaming events
+      # During streaming: check live streaming events (need more than 1)
       message.id == streaming_message_id and message.streaming ->
-        length(streaming_events) > 1
+        match?([_, _ | _], streaming_events)
 
       # After streaming: check persisted events on the message
       not message.streaming and is_list(Map.get(message, :intermediate_events)) ->
-        length(message.intermediate_events) > 0
+        message.intermediate_events != []
 
       true ->
         false
@@ -3045,8 +3045,7 @@ defmodule OllamaChatWeb.ChatLive do
     """
 
     attachments_text =
-      attachment_contents
-      |> Enum.map(fn att ->
+      Enum.map_join(attachment_contents, "\n", fn att ->
         """
 
         --- File: #{att.name} (#{format_file_size(att.size)}) ---
@@ -3054,7 +3053,6 @@ defmodule OllamaChatWeb.ChatLive do
         --- End of #{att.name} ---
         """
       end)
-      |> Enum.join("\n")
 
     full_context = context_header <> attachments_text <> "\n[END OF CONTEXT FILES]\n"
 

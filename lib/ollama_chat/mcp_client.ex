@@ -331,20 +331,18 @@ defmodule OllamaChat.MCPClient do
   # Private Functions
 
   defp start_mcp_server(config) do
-    try do
-      Client.start_link(
-        transport: :stdio,
-        command: [config.command | config.args]
-      )
-    rescue
-      error ->
-        Logger.error("Exception starting MCP server #{config.display_name}: #{inspect(error)}")
-        {:error, error}
-    catch
-      :exit, reason ->
-        Logger.error("Exit starting MCP server #{config.display_name}: #{inspect(reason)}")
-        {:error, reason}
-    end
+    Client.start_link(
+      transport: :stdio,
+      command: [config.command | config.args]
+    )
+  rescue
+    error ->
+      Logger.error("Exception starting MCP server #{config.display_name}: #{inspect(error)}")
+      {:error, error}
+  catch
+    :exit, reason ->
+      Logger.error("Exit starting MCP server #{config.display_name}: #{inspect(reason)}")
+      {:error, reason}
   end
 
   defp find_server_by_pid(clients, pid) do
