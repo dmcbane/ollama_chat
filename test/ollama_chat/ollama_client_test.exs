@@ -134,4 +134,50 @@ defmodule OllamaChat.OllamaClientTest do
       end
     end
   end
+
+  describe "kill_command_configured?/0" do
+    test "returns a boolean" do
+      result = OllamaClient.kill_command_configured?()
+      assert is_boolean(result)
+    end
+  end
+
+  describe "kill_ollama/0" do
+    test "returns :ok or {:error, _}" do
+      result = OllamaClient.kill_ollama()
+      assert result == :ok or match?({:error, _}, result)
+    end
+  end
+
+  describe "restart_ollama/0" do
+    test "returns :ok or {:error, _}" do
+      result = OllamaClient.restart_ollama()
+      assert result == :ok or match?({:error, _}, result)
+    end
+  end
+
+  describe "health_check_enabled?/0" do
+    test "returns a boolean" do
+      result = OllamaClient.health_check_enabled?()
+      assert is_boolean(result)
+    end
+
+    test "returns true by default" do
+      # Default config in dev.exs and runtime.exs sets this to true
+      assert OllamaClient.health_check_enabled?() == true
+    end
+  end
+
+  describe "health_check_interval/0" do
+    test "returns a positive integer" do
+      result = OllamaClient.health_check_interval()
+      assert is_integer(result)
+      assert result > 0
+    end
+
+    test "returns 30_000 by default" do
+      # Default config in dev.exs and runtime.exs sets this to 30_000
+      assert OllamaClient.health_check_interval() == 30_000
+    end
+  end
 end

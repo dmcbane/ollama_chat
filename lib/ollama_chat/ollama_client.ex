@@ -223,27 +223,30 @@ defmodule OllamaChat.OllamaClient do
   Returns :ok on success, {:error, reason} on failure.
   """
   def kill_ollama do
-    Logger.info("Attempting to kill Ollama process")
-
-    kill_command =
+    {kill_command, using_default} =
       case ollama_kill_command() do
-        nil -> "pkill -9 ollama"
-        command -> command
+        nil -> {"pkill -9 ollama", true}
+        command -> {command, false}
       end
+
+    Logger.info("Attempting to kill Ollama process with command: #{kill_command}")
 
     case System.cmd("sh", ["-c", kill_command], stderr_to_stdout: true) do
       {_output, 0} ->
-        Logger.info("Ollama process killed successfully")
+        Logger.info("Ollama process killed successfully (command: #{kill_command})")
         :ok
 
-      {_output, 1} ->
+      {_output, 1} when using_default ->
         # pkill returns 1 if no process found - not necessarily an error
         Logger.info("No Ollama process found to kill")
         :ok
 
       {output, exit_code} ->
-        Logger.error("Failed to kill Ollama (exit_code=#{exit_code}): #{output}")
-        {:error, "Failed to kill Ollama (exit code #{exit_code})"}
+        Logger.error(
+          "Failed to kill Ollama (command: #{kill_command}, exit_code=#{exit_code}): #{output}"
+        )
+
+        {:error, "Failed to kill Ollama (exit code #{exit_code}): #{output}"}
     end
   end
 

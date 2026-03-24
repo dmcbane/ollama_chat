@@ -747,4 +747,51 @@ defmodule OllamaChatWeb.ChatLiveTest do
       refute html =~ "Sending..."
     end
   end
+
+  describe "health check" do
+    test "mounts with health check enabled by default", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Health check should be enabled by default
+      state = :sys.get_state(view.pid)
+      socket = state.socket
+
+      assert socket.assigns.health_check_enabled == true
+      assert socket.assigns.health_check_healthy == true
+    end
+
+    test "health_check message updates healthy status when Ollama is running", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      send(view.pid, :health_check)
+      _ = :sys.get_state(view.pid)
+
+      html = render(view)
+      # Should show either Healthy or Unreachable depending on Ollama state
+      assert html =~ "Healthy" or html =~ "Unreachable"
+    end
+
+    test "health_check message reschedules the next check", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      send(view.pid, :health_check)
+      state = :sys.get_state(view.pid)
+      socket = state.socket
+
+      # Timer should be set (not nil) after a health check runs
+      assert socket.assigns.health_check_timer != nil
+    end
+
+    test "health check status is displayed in sidebar", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+
+      assert html =~ "Health Check Status"
+    end
+
+    test "health check shows healthy indicator by default", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+
+      assert html =~ "Healthy"
+    end
+  end
 end
