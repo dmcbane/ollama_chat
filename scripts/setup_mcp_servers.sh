@@ -7,7 +7,9 @@ echo "MCP Test Servers Setup"
 echo "================================================"
 echo ""
 
-. ../mcp_test_server/start.sh
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
+. $SCRIPT_DIR/../mcp_test_server/start.sh
 
 ## # Colors for output
 ## RED='\033[0;31m'
