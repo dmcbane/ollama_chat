@@ -1,5 +1,7 @@
 # Settings Dialog & MCP Server Configuration Plan
 
+> **Status:** Phase 1 ✅ Complete | Phase 2 ✅ Complete | Phase 3 🔲 Next | Phase 4 🔲 Future
+
 ## Overview
 
 Move settings from sidebar accordion panels into a proper tabbed settings dialog, and add the ability to configure MCP servers from the UI at runtime.
@@ -76,9 +78,10 @@ MCP servers are server-side processes, so config must live server-side:
 
 ---
 
-## Phase 1: Settings Dialog Infrastructure
+## Phase 1: Settings Dialog Infrastructure ✅
 
 **Goal:** Create the modal, move existing settings into it, add gear button to sidebar.
+**Completed:** Commit `30274ce`
 
 ### 1.1 — Settings Modal Component
 
@@ -118,57 +121,64 @@ MCP servers are server-side processes, so config must live server-side:
 
 ---
 
-## Phase 2: MCP Server Configuration Backend
+## Phase 2: MCP Server Configuration Backend ✅
 
 **Goal:** Enable runtime MCP server management with file-based persistence.
+**Completed:** See commit history.
 
 ### 2.1 — `OllamaChat.MCPConfig` Module
 
-New file: `lib/ollama_chat/mcp_config.ex`
+New file: `lib/ollama_chat/mcp_config.ex` ✅
 
 - `config_path/0` — returns path from app env or default `~/.config/ollama_chat/mcp_servers.json`
-- `load/0` — reads JSON file, returns list of server configs; returns `[]` if file doesn't exist
+- `load/0` — reads JSON file, returns `{:ok, list}` or `{:ok, []}` if file doesn't exist, `{:error, reason}` on parse failure
 - `save/1` — writes server configs to JSON file (atomic write with temp file + rename)
-- `merge_with_defaults/1` — merges file config with `Application.get_env(:ollama_chat, :mcp_servers, [])`, file config wins for matching names
-- `validate_server_config/1` — ensures required fields (name, command), validates name format
+- `load_with_defaults/0` — merges file config with `Application.get_env(:ollama_chat, :mcp_servers, [])`, file config wins for matching names
+- `validate_server_config/1` — ensures required fields (name, display_name, command), validates types, fills defaults
+- `to_internal/1` / `to_json/1` — conversion between string-keyed JSON maps and atom-keyed internal maps
 
-### 2.2 — MCPClient Dynamic Management
+### 2.2 — MCPClient Dynamic Management ✅
 
-Extend `lib/ollama_chat/mcp_client.ex` with new public API:
+Extended `lib/ollama_chat/mcp_client.ex` with new public API:
 
-- `add_server(config)` — start a new server, update state, return `:ok | {:error, reason}`
-- `remove_server(name)` — stop server, unlink, clean up tools, return `:ok`
-- `update_server(name, config)` — stop old, start new if config changed, return `:ok | {:error, reason}`
-- `toggle_server(name, enabled)` — enable/disable without removing config
-- `list_server_configs/0` — return current server configs (for UI to display)
+- `add_server(config)` — validates, persists, starts if enabled. Returns `:ok | {:error, reason}`
+- `remove_server(name)` — stops server, unlinks, removes tools, persists. Returns `:ok | {:error, reason}`
+- `update_server(name, config)` — stops old, validates new, starts if enabled, persists. Returns `:ok | {:error, reason}`
+- `toggle_server(name, enabled)` — enables/disables, starts/stops accordingly, persists. Returns `:ok | {:error, reason}`
+- `list_server_configs/0` — returns current server configs from GenServer state
 
-Modify `handle_info(:start_servers, ...)` and `handle_info({:restart_server, ...}, ...)` to use `MCPConfig.load()` merged with app config instead of only `Application.get_env`.
+Additional changes:
+- `State` struct now includes `server_configs` field
+- `init/1` always traps exits (supports dynamic server management when MCP starts disabled)
+- `handle_info(:start_servers, ...)` and `handle_info({:restart_server, ...}, ...)` use `state.server_configs` instead of `Application.get_env`
+- Startup loads configs via `MCPConfig.load_with_defaults/0`
+- Extracted `maybe_start_server/2`, `start_and_link_server/2`, `stop_and_remove_client/2`, `cancel_and_remove_timer/2`, `replace_config/3`, `persist_configs/1` helpers
 
-### 2.3 — Config Wiring
+### 2.3 — Config Wiring ✅
 
 | File | Changes |
 |---|---|
-| `config/config.exs` | Add `mcp_config_path` option |
-| `config/dev.exs` | Optionally set dev config path |
-| `config/runtime.exs` | Wire `MCP_CONFIG_PATH` env var |
+| `config/config.exs` | Added `mcp_config_path: nil` default |
+| `config/runtime.exs` | Wired `MCP_CONFIG_PATH` env var |
+| `CLAUDE.md` | Updated key modules and env var list |
 
-### 2.4 — Tests
+### 2.4 — Tests ✅
 
-- `MCPConfig` unit tests: load/save/merge/validate
-- `MCPClient` tests: add_server, remove_server, toggle_server
-- Integration test: add server via config → tools become available
+- **35 MCPConfig tests:** config_path, load, save, validate, to_internal/to_json, load_with_defaults, save+load round-trip
+- **16 MCPClient dynamic management tests:** add (valid/invalid/duplicate/disabled), remove (existing/nonexistent/string-name), update (existing/nonexistent/invalid), toggle (enable/disable/nonexistent), list_server_configs, persistence verification
+- **Total:** 269 tests pass, 0 failures, 0 compile warnings, 0 Credo issues
 
 ### Files Changed (Phase 2)
 
 | File | Changes |
 |---|---|
-| `lib/ollama_chat/mcp_config.ex` | **New** — JSON file persistence for MCP server configs |
-| `lib/ollama_chat/mcp_client.ex` | Add dynamic server management API |
-| `config/config.exs` | Add `mcp_config_path` option |
-| `config/dev.exs` | Optionally set dev config path |
-| `config/runtime.exs` | Wire `MCP_CONFIG_PATH` env var |
-| `test/ollama_chat/mcp_config_test.exs` | **New** — MCPConfig tests |
-| `test/ollama_chat/mcp_client_test.exs` | Add dynamic management tests |
+| `lib/ollama_chat/mcp_config.ex` | **New** — JSON file persistence (config_path, load, save, validate, merge, convert) |
+| `lib/ollama_chat/mcp_client.ex` | Dynamic management API (add/remove/update/toggle/list), MCPConfig integration, extracted helpers |
+| `config/config.exs` | Added `mcp_config_path: nil` |
+| `config/runtime.exs` | Wired `MCP_CONFIG_PATH` env var |
+| `CLAUDE.md` | Added MCPClient and MCPConfig to key modules |
+| `test/ollama_chat/mcp_config_test.exs` | **New** — 35 tests |
+| `test/ollama_chat/mcp_client_test.exs` | Added 17 dynamic management tests |
 
 ---
 
@@ -271,13 +281,12 @@ Modify `handle_info(:start_servers, ...)` and `handle_info({:restart_server, ...
 
 ## Estimated Effort
 
-| Phase | Scope | Estimate |
-|---|---|---|
-| Phase 1 | Settings dialog + move existing settings | 3–4 hours |
-| Phase 2 | MCP Config backend + MCPClient dynamic API | 2–3 hours |
-| Phase 3 | MCP Server configuration UI | 3–4 hours |
-| Phase 4 | Polish, accessibility, edge cases | 2–3 hours |
-| **Total** | | **10–14 hours** |
+| Phase | Scope | Estimate | Actual |
+|---|---|---|---|
+| Phase 1 | Settings dialog + move existing settings | 3–4 hours | ✅ Done |
+| Phase 2 | MCP Config backend + MCPClient dynamic API | 2–3 hours | ✅ Done |
+| Phase 3 | MCP Server configuration UI | 3–4 hours | 🔲 Next |
+| Phase 4 | Polish, accessibility, edge cases | 2–3 hours | 🔲 Future |
 
 ## Execution Order
 

@@ -7,12 +7,15 @@ defmodule OllamaChat.MCPClient do
   - Discovering available tools from all connected servers
   - Executing tool calls with proper error handling
   - Health monitoring and automatic reconnection
+  - Dynamic server management (add, remove, update, toggle)
+  - Persisting server configurations via `OllamaChat.MCPConfig`
   """
 
   use GenServer
   require Logger
 
   alias ExMCP.Client
+  alias OllamaChat.MCPConfig
 
   @type server_name :: atom()
   @type tool_name :: String.t()
@@ -23,6 +26,7 @@ defmodule OllamaChat.MCPClient do
     @moduledoc false
     defstruct clients: %{},
               tools: %{},
+              server_configs: [],
               last_discovery: nil,
               # 5 minutes
               discovery_interval: 300_000,
@@ -87,16 +91,61 @@ defmodule OllamaChat.MCPClient do
     Application.get_env(:ollama_chat, :mcp_enabled, false)
   end
 
+  @doc """
+  Adds a new MCP server at runtime.
+  The config is validated, persisted to the config file, and the server is started if enabled.
+  """
+  @spec add_server(map()) :: :ok | {:error, term()}
+  def add_server(config) do
+    GenServer.call(__MODULE__, {:add_server, config}, 15_000)
+  end
+
+  @doc """
+  Removes an MCP server by name, stopping it if running.
+  """
+  @spec remove_server(server_name()) :: :ok | {:error, term()}
+  def remove_server(name) do
+    GenServer.call(__MODULE__, {:remove_server, name}, 15_000)
+  end
+
+  @doc """
+  Updates an existing MCP server's configuration.
+  Stops the old server and starts a new one with the updated config.
+  """
+  @spec update_server(server_name(), map()) :: :ok | {:error, term()}
+  def update_server(name, config) do
+    GenServer.call(__MODULE__, {:update_server, name, config}, 15_000)
+  end
+
+  @doc """
+  Toggles a server's enabled state. Starts or stops the server accordingly.
+  """
+  @spec toggle_server(server_name(), boolean()) :: :ok | {:error, term()}
+  def toggle_server(name, enabled) do
+    GenServer.call(__MODULE__, {:toggle_server, name, enabled}, 15_000)
+  end
+
+  @doc """
+  Returns the current list of all server configurations.
+  """
+  @spec list_server_configs() :: [map()]
+  def list_server_configs do
+    GenServer.call(__MODULE__, :list_server_configs)
+  end
+
   # Server Callbacks
 
   @impl true
   def init(_opts) do
+    # Always trap exits so dynamic server management works
+    # even when MCP starts disabled (servers can be added at runtime)
+    Process.flag(:trap_exit, true)
+
     if mcp_enabled?() do
       Logger.info("Starting MCP client manager")
-      # Trap exits so we can handle crashed MCP clients
-      Process.flag(:trap_exit, true)
+      configs = MCPConfig.load_with_defaults()
       send(self(), :start_servers)
-      {:ok, %State{}}
+      {:ok, %State{server_configs: configs}}
     else
       Logger.info("MCP client disabled")
       {:ok, %State{}}
@@ -105,7 +154,7 @@ defmodule OllamaChat.MCPClient do
 
   @impl true
   def handle_info(:start_servers, state) do
-    servers = Application.get_env(:ollama_chat, :mcp_servers, [])
+    servers = state.server_configs
 
     clients =
       servers
@@ -203,10 +252,8 @@ defmodule OllamaChat.MCPClient do
 
   @impl true
   def handle_info({:restart_server, server_name}, state) do
-    # Find the server config in the original list
-    servers = Application.get_env(:ollama_chat, :mcp_servers, [])
-
-    case Enum.find(servers, fn s -> s.name == server_name end) do
+    # Find the server config from our stored configs
+    case Enum.find(state.server_configs, fn s -> s.name == server_name end) do
       nil ->
         Logger.warning("Cannot restart #{server_name}: config not found")
         {:noreply, state}
@@ -320,6 +367,155 @@ defmodule OllamaChat.MCPClient do
     combined = Map.merge(restart_info, info)
 
     {:reply, combined, state}
+  end
+
+  @impl true
+  def handle_call({:add_server, config}, _from, state) do
+    case MCPConfig.validate_server_config(config) do
+      {:ok, validated} ->
+        if Enum.any?(state.server_configs, fn s -> s.name == validated.name end) do
+          {:reply, {:error, "Server with name #{validated.name} already exists"}, state}
+        else
+          new_configs = state.server_configs ++ [validated]
+          persist_configs(new_configs)
+          state = %{state | server_configs: new_configs}
+          state = maybe_start_server(state, validated)
+          {:reply, :ok, state}
+        end
+
+      {:error, errors} ->
+        {:reply, {:error, {:validation, errors}}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:remove_server, name}, _from, state) do
+    name = to_server_name(name)
+
+    if Enum.any?(state.server_configs, fn s -> s.name == name end) do
+      # Stop the server if running
+      state = stop_and_remove_client(state, name)
+
+      # Remove from configs
+      new_configs = Enum.reject(state.server_configs, fn s -> s.name == name end)
+      persist_configs(new_configs)
+
+      # Cancel any pending restart timers
+      new_timers = cancel_and_remove_timer(state.restart_timers, name)
+
+      # Remove tools belonging to this server
+      new_tools = Map.reject(state.tools, fn {_tool_name, info} -> info.server == name end)
+      OllamaChat.MCPRegistry.register_tools(new_tools)
+
+      state = %{
+        state
+        | server_configs: new_configs,
+          restart_timers: new_timers,
+          tools: new_tools
+      }
+
+      {:reply, :ok, state}
+    else
+      {:reply, {:error, "Server #{name} not found"}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:update_server, name, config}, _from, state) do
+    name = to_server_name(name)
+
+    case MCPConfig.validate_server_config(config) do
+      {:ok, validated} ->
+        if Enum.any?(state.server_configs, fn s -> s.name == name end) do
+          state = stop_and_remove_client(state, name)
+          new_timers = cancel_and_remove_timer(state.restart_timers, name)
+          new_configs = replace_config(state.server_configs, name, validated)
+          persist_configs(new_configs)
+
+          state = %{state | server_configs: new_configs, restart_timers: new_timers}
+          state = maybe_start_server(state, validated)
+          {:reply, :ok, state}
+        else
+          {:reply, {:error, "Server #{name} not found"}, state}
+        end
+
+      {:error, errors} ->
+        {:reply, {:error, {:validation, errors}}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:toggle_server, name, enabled}, _from, state) do
+    name = to_server_name(name)
+
+    case Enum.find(state.server_configs, fn s -> s.name == name end) do
+      nil ->
+        {:reply, {:error, "Server #{name} not found"}, state}
+
+      server_config ->
+        updated_config = %{server_config | enabled: enabled}
+
+        new_configs =
+          Enum.map(state.server_configs, fn s ->
+            if s.name == name, do: updated_config, else: s
+          end)
+
+        persist_configs(new_configs)
+
+        state =
+          cond do
+            enabled and not Map.has_key?(state.clients, name) ->
+              # Enable: start the server
+              case start_mcp_server(updated_config) do
+                {:ok, client_pid} ->
+                  Logger.info("Enabled and started MCP server: #{updated_config.display_name}")
+
+                  Process.link(client_pid)
+
+                  client_info = %{
+                    pid: client_pid,
+                    config: updated_config,
+                    status: :connected,
+                    last_health_check: DateTime.utc_now(),
+                    restart_count: 0
+                  }
+
+                  new_clients = Map.put(state.clients, name, client_info)
+                  send(self(), :discover_tools)
+                  %{state | clients: new_clients, server_configs: new_configs}
+
+                {:error, reason} ->
+                  Logger.error(
+                    "Failed to start MCP server #{updated_config.display_name}: #{inspect(reason)}"
+                  )
+
+                  %{state | server_configs: new_configs}
+              end
+
+            not enabled and Map.has_key?(state.clients, name) ->
+              # Disable: stop the server
+              state = stop_and_remove_client(%{state | server_configs: new_configs}, name)
+              new_timers = cancel_and_remove_timer(state.restart_timers, name)
+
+              # Remove tools from this server
+              new_tools =
+                Map.reject(state.tools, fn {_t, info} -> info.server == name end)
+
+              OllamaChat.MCPRegistry.register_tools(new_tools)
+              %{state | restart_timers: new_timers, tools: new_tools}
+
+            true ->
+              # No state change needed (already in the desired state)
+              %{state | server_configs: new_configs}
+          end
+
+        {:reply, :ok, state}
+    end
+  end
+
+  @impl true
+  def handle_call(:list_server_configs, _from, state) do
+    {:reply, state.server_configs, state}
   end
 
   @impl true
@@ -461,7 +657,90 @@ defmodule OllamaChat.MCPClient do
       tool_name in Map.get(server_config, :dangerous_tools, [])
   end
 
+  defp replace_config(configs, name, new_config) do
+    Enum.map(configs, fn s -> if s.name == name, do: new_config, else: s end)
+  end
+
   defp mcp_enabled? do
     Application.get_env(:ollama_chat, :mcp_enabled, false)
+  end
+
+  defp maybe_start_server(state, config) do
+    if config.enabled do
+      start_and_link_server(state, config)
+    else
+      state
+    end
+  end
+
+  defp start_and_link_server(state, config) do
+    case start_mcp_server(config) do
+      {:ok, client_pid} ->
+        Logger.info("Started MCP server: #{config.display_name}")
+        Process.link(client_pid)
+
+        client_info = %{
+          pid: client_pid,
+          config: config,
+          status: :connected,
+          last_health_check: DateTime.utc_now(),
+          restart_count: 0
+        }
+
+        new_clients = Map.put(state.clients, config.name, client_info)
+        send(self(), :discover_tools)
+        %{state | clients: new_clients}
+
+      {:error, reason} ->
+        Logger.error("Failed to start MCP server #{config.display_name}: #{inspect(reason)}")
+
+        state
+    end
+  end
+
+  defp to_server_name(name) when is_atom(name), do: name
+  defp to_server_name(name) when is_binary(name), do: String.to_atom(name)
+
+  defp stop_and_remove_client(state, name) do
+    case Map.get(state.clients, name) do
+      nil ->
+        state
+
+      client_info ->
+        # Unlink before stopping to avoid triggering our EXIT handler
+        Process.unlink(client_info.pid)
+
+        try do
+          GenServer.stop(client_info.pid, :normal, 5_000)
+        catch
+          :exit, _ -> :ok
+        end
+
+        Logger.info("Stopped MCP server: #{client_info.config.display_name}")
+        %{state | clients: Map.delete(state.clients, name)}
+    end
+  end
+
+  defp cancel_and_remove_timer(timers, name) do
+    case Map.get(timers, name) do
+      nil ->
+        timers
+
+      ref ->
+        Process.cancel_timer(ref)
+        Map.delete(timers, name)
+    end
+  end
+
+  defp persist_configs(configs) do
+    case MCPConfig.save(configs) do
+      :ok ->
+        Logger.debug("Persisted MCP server configs")
+        :ok
+
+      {:error, reason} ->
+        Logger.error("Failed to persist MCP server configs: #{inspect(reason)}")
+        {:error, reason}
+    end
   end
 end

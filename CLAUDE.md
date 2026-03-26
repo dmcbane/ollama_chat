@@ -26,13 +26,15 @@ mix compile --warnings-as-errors    # Check for warnings
 **Key modules:**
 - `OllamaChat.OllamaClient` (`lib/ollama_chat/ollama_client.ex`) — HTTP client for Ollama API: streaming chat, model listing, health checks, auto-start via `OLLAMA_START_COMMAND`
 - `OllamaChatWeb.ChatLive` (`lib/ollama_chat_web/live/chat_live.ex`) — Main LiveView handling all UI state, message streaming, model selection, error recovery. Uses Phoenix streams for the message list
+- `OllamaChat.MCPClient` (`lib/ollama_chat/mcp_client.ex`) — GenServer managing MCP server connections, tool discovery, execution, crash recovery, and dynamic server management (add/remove/update/toggle)
+- `OllamaChat.MCPConfig` (`lib/ollama_chat/mcp_config.ex`) — JSON file-based persistence for MCP server configurations. Loads/saves to `~/.config/ollama_chat/mcp_servers.json` (or `MCP_CONFIG_PATH`), merges with app config defaults
 - `OllamaChatWeb.CoreComponents` — Reusable UI components including `<.icon>`, `<.input>`, `<.button>`
 
 **Streaming flow:** User sends message → spawned process calls `OllamaClient.chat_stream/3` → NDJSON chunks sent as `{:stream_chunk, id, content}` messages to LiveView → accumulated and rendered in real-time → `{:stream_done, id}` finalizes
 
 **Error recovery:** Connection failures trigger `ensure_ollama_running/0` which can auto-start Ollama, then retry with a 2-second delay.
 
-**Environment variables** (see `.env.example`): `OLLAMA_BASE_URL`, `OLLAMA_DEFAULT_MODEL`, `OLLAMA_START_COMMAND`, `OLLAMA_KILL_COMMAND`, `OLLAMA_CHAT_PORT`, `OLLAMA_HEALTH_CHECK_ENABLED`, `OLLAMA_HEALTH_CHECK_INTERVAL_MS`
+**Environment variables** (see `.env.example`): `OLLAMA_BASE_URL`, `OLLAMA_DEFAULT_MODEL`, `OLLAMA_START_COMMAND`, `OLLAMA_KILL_COMMAND`, `OLLAMA_CHAT_PORT`, `OLLAMA_HEALTH_CHECK_ENABLED`, `OLLAMA_HEALTH_CHECK_INTERVAL_MS`, `MCP_CONFIG_PATH`
 
 ## Development Guidelines
 
