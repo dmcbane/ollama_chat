@@ -123,6 +123,129 @@
     animation: fade-in 0.3s ease-out;
 }
 
+/* Settings dialog open animation */
+@keyframes dialog-overlay-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes dialog-content-in {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.animate-dialog-overlay {
+    animation: dialog-overlay-in 0.2s ease-out;
+}
+
+.animate-dialog-content {
+    animation: dialog-content-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Tab panel fade-in transition */
+@keyframes tab-panel-in {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-tab-panel {
+    animation: tab-panel-in 0.2s ease-out;
+}
+
+/* Toast notification animations */
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes toast-out {
+    from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(16px) scale(0.95);
+    }
+}
+
+.animate-toast-in {
+    animation: toast-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-toast-out {
+    animation: toast-out 0.2s ease-in forwards;
+}
+
+/* MCP server status dot pulse */
+@keyframes status-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.4;
+    }
+}
+
+.animate-status-pulse {
+    animation: status-pulse 2s ease-in-out infinite;
+}
+
+/* Settings button gear spin on hover */
+@keyframes gear-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(90deg);
+    }
+}
+
+.group:hover .animate-gear-hover {
+    animation: gear-spin 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* MCP form error banner slide-in */
+@keyframes error-slide-in {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+        max-height: 0;
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+        max-height: 100px;
+    }
+}
+
+.animate-error-in {
+    animation: error-slide-in 0.25s ease-out;
+}
+
 /* Smooth scrolling for chat container */
 #messages {
     scroll-behavior: smooth;

@@ -123,6 +123,66 @@ defmodule OllamaChat.MCPConfig do
   end
 
   @doc """
+  Validates that a command path exists and is executable.
+
+  Returns `:ok` if the command is found and executable, `{:warning, message}`
+  if the command is not found (it might be installed later), or
+  `{:error, message}` for invalid input.
+
+  ## Examples
+
+      iex> MCPConfig.validate_command_path("/usr/bin/env")
+      :ok
+
+      iex> MCPConfig.validate_command_path("")
+      {:error, "command is required"}
+
+      iex> MCPConfig.validate_command_path("/no/such/binary")
+      {:warning, "Command path does not exist: /no/such/binary"}
+  """
+  @spec validate_command_path(String.t()) :: :ok | {:warning, String.t()} | {:error, String.t()}
+  def validate_command_path(command) when is_binary(command) do
+    if String.trim(command) == "" do
+      {:error, "command is required"}
+    else
+      validate_command(command)
+    end
+  end
+
+  defp validate_command(<<"/"::utf8, _rest::binary>> = path) do
+    check_absolute_path(path)
+  end
+
+  defp validate_command(<<"~"::utf8, _rest::binary>> = path) do
+    check_absolute_path(Path.expand(path))
+  end
+
+  defp validate_command(command) do
+    case System.find_executable(command) do
+      nil -> {:warning, "Command '#{command}' not found in PATH"}
+      _path -> :ok
+    end
+  end
+
+  defp check_absolute_path(path) do
+    if File.exists?(path) do
+      case File.stat(path) do
+        {:ok, %{mode: mode}} ->
+          if Bitwise.band(mode, 0o111) != 0 do
+            :ok
+          else
+            {:warning, "Command path is not executable: #{path}"}
+          end
+
+        {:error, _reason} ->
+          {:warning, "Command path does not exist: #{path}"}
+      end
+    else
+      {:warning, "Command path does not exist: #{path}"}
+    end
+  end
+
+  @doc """
   Validates and normalizes a server config map.
 
   Accepts both string-keyed and atom-keyed maps. On success returns
@@ -206,17 +266,27 @@ defmodule OllamaChat.MCPConfig do
   # ── Private helpers ─────────────────────────────────────────────────
 
   defp parse_json_contents(contents) do
-    case Jason.decode(contents) do
-      {:ok, %{"servers" => servers}} when is_list(servers) ->
-        {:ok, Enum.map(servers, &to_internal/1)}
+    contents = maybe_trim_bom(contents)
 
-      {:ok, _other} ->
-        {:error, "expected JSON object with a \"servers\" key containing a list"}
+    if String.trim(contents) == "" do
+      {:ok, []}
+    else
+      case Jason.decode(contents) do
+        {:ok, %{"servers" => servers}} when is_list(servers) ->
+          {:ok, Enum.map(servers, &to_internal/1)}
 
-      {:error, %Jason.DecodeError{} = error} ->
-        {:error, "JSON parse error: #{Exception.message(error)}"}
+        {:ok, _other} ->
+          {:error, "expected JSON object with a \"servers\" key containing a list"}
+
+        {:error, %Jason.DecodeError{} = error} ->
+          {:error, "JSON parse error: #{Exception.message(error)}"}
+      end
     end
   end
+
+  # Strip a UTF-8 BOM (byte-order mark) from the beginning of content if present.
+  defp maybe_trim_bom(<<0xEF, 0xBB, 0xBF, rest::binary>>), do: rest
+  defp maybe_trim_bom(contents), do: contents
 
   defp encode_json(payload) do
     case Jason.encode(payload, pretty: true) do

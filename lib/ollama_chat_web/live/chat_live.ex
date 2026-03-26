@@ -74,6 +74,8 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:health_check_healthy, true)
       |> assign(:health_check_timer, nil)
       |> assign(:streaming_pid, nil)
+      |> assign(:toast_message, nil)
+      |> assign(:toast_type, nil)
       |> assign(:attachments, [])
       |> assign(:context_attachments, [])
       |> stream(:messages, [])
@@ -783,8 +785,23 @@ defmodule OllamaChatWeb.ChatLive do
         configs = MCPClient.list_server_configs()
         server_status = MCPClient.server_info()
 
+        # Check command path and show appropriate toast
+        command = String.trim(params["command"])
+
+        toast_socket =
+          case OllamaChat.MCPConfig.validate_command_path(command) do
+            :ok ->
+              show_toast(socket, "Server saved successfully")
+
+            {:warning, warning} ->
+              show_toast(socket, "Server saved — #{warning}", :warning)
+
+            {:error, _} ->
+              show_toast(socket, "Server saved successfully")
+          end
+
         {:noreply,
-         socket
+         toast_socket
          |> assign(:mcp_server_configs, configs)
          |> assign(:mcp_server_status, server_status)
          |> assign(:mcp_tools, fetch_mcp_tools())
@@ -813,6 +830,7 @@ defmodule OllamaChatWeb.ChatLive do
 
         {:noreply,
          socket
+         |> show_toast("Server removed successfully")
          |> assign(:mcp_server_configs, configs)
          |> assign(:mcp_server_status, server_status)
          |> assign(:mcp_tools, fetch_mcp_tools())
@@ -839,10 +857,11 @@ defmodule OllamaChatWeb.ChatLive do
           :ok ->
             configs = MCPClient.list_server_configs()
             server_status = MCPClient.server_info()
+            action = if new_enabled, do: "enabled", else: "disabled"
 
-            # Give a moment for tool discovery after toggling
             {:noreply,
              socket
+             |> show_toast("Server #{action} successfully")
              |> assign(:mcp_server_configs, configs)
              |> assign(:mcp_server_status, server_status)
              |> assign(:mcp_tools, fetch_mcp_tools())}
@@ -864,6 +883,11 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_event("preference_loaded", %{"save_intermediate_events" => value}, socket) do
     {:noreply, assign(socket, :save_intermediate_events, value)}
+  end
+
+  @impl true
+  def handle_event("dismiss_toast", _params, socket) do
+    {:noreply, socket |> assign(:toast_message, nil) |> assign(:toast_type, nil)}
   end
 
   @impl true
@@ -1277,6 +1301,19 @@ defmodule OllamaChatWeb.ChatLive do
     {:noreply, assign(socket, :status_message, nil)}
   end
 
+  @impl true
+  def handle_info(:clear_toast, socket) do
+    {:noreply, socket |> assign(:toast_message, nil) |> assign(:toast_type, nil)}
+  end
+
+  defp show_toast(socket, message, type \\ :success) do
+    Process.send_after(self(), :clear_toast, 3000)
+
+    socket
+    |> assign(:toast_message, message)
+    |> assign(:toast_type, type)
+  end
+
   defp stream_normal_chunk(socket, message_id, new_content) do
     # Capture intermediate events for collapsible container
     current_events = socket.assigns.streaming_events
@@ -1359,85 +1396,120 @@ defmodule OllamaChatWeb.ChatLive do
         <%!-- Sidebar (left column on wide screens) --%>
         <div class="xl:w-80 xl:flex-shrink-0 xl:sticky xl:top-8 xl:self-start xl:max-h-[calc(100vh-4rem)] xl:overflow-y-auto mb-6 xl:mb-0">
           <%!-- Header --%>
-          <div class="mb-6">
-            <h1 class="text-4xl font-bold text-white mb-2">Ollama Chat</h1>
-            <div class="flex items-center gap-3">
-              <div class="flex items-center gap-2">
-                <div class={[
-                  "w-3 h-3 rounded-full",
-                  @ollama_status == :running && "bg-green-500 animate-pulse",
-                  @ollama_status == :stopped && "bg-red-500",
-                  @ollama_status == :unknown && "bg-yellow-500"
+          <div class="mb-4">
+            <h1 class="text-4xl font-bold text-white">Ollama Chat</h1>
+          </div>
+
+          <%!-- Status indicators (Ollama + MCP — unified row) --%>
+          <div class="flex items-center gap-2 mb-4">
+            <%!-- Ollama status (combines connection + health check) --%>
+            <% {ollama_dot, ollama_label, ollama_text_cls, ollama_bg_cls} =
+              ollama_status_display(assigns) %>
+            <div
+              class={[
+                "flex-1 px-3 py-2 rounded-lg flex items-center gap-2 border",
+                ollama_bg_cls
+              ]}
+              title={ollama_status_tooltip(assigns)}
+              id="ollama-status-indicator"
+            >
+              <div class={"w-2 h-2 rounded-full flex-shrink-0 " <> ollama_dot}></div>
+              <span class={"text-xs " <> ollama_text_cls}>
+                {ollama_label}
+              </span>
+            </div>
+            <%!-- MCP tools --%>
+            <%= if @mcp_enabled? do %>
+              <div
+                class="flex-1 px-3 py-2 bg-slate-800/60 rounded-lg border border-slate-700/50 flex items-center gap-2"
+                title={mcp_status_tooltip(assigns)}
+                id="mcp-status-indicator"
+              >
+                <.icon
+                  name="hero-wrench-screwdriver"
+                  class={[
+                    "w-3.5 h-3.5 flex-shrink-0",
+                    if(map_size(@mcp_tools) > 0, do: "text-purple-400", else: "text-gray-500")
+                  ]}
+                />
+                <span class={[
+                  "text-xs",
+                  if(map_size(@mcp_tools) > 0, do: "text-gray-400", else: "text-gray-500")
                 ]}>
-                </div>
-                <span class="text-sm text-gray-300">
-                  {if @ollama_status == :running, do: "Connected", else: "Disconnected"}
+                  <%= if map_size(@mcp_tools) > 0 do %>
+                    {map_size(@mcp_tools)} tools
+                  <% else %>
+                    No tools
+                  <% end %>
                 </span>
-                <%= if @ollama_status == :stopped and @start_command_configured and not @recovering do %>
+              </div>
+            <% end %>
+          </div>
+
+          <%!-- Ollama Server controls --%>
+          <%= if @start_command_configured do %>
+            <div class="mb-4">
+              <label class="text-sm text-gray-300 mb-1 block">Server</label>
+              <div class="flex items-center gap-2">
+                <%= if @ollama_status == :stopped and not @recovering do %>
                   <button
                     phx-click="start_ollama"
                     id="start-ollama-btn"
-                    class="ml-1 px-2 py-0.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors flex items-center gap-1"
+                    class="px-4 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2 hover:bg-green-900/50 hover:border-green-700 hover:text-green-200"
+                    title="Start the Ollama process"
                   >
-                    <.icon name="hero-play" class="w-3 h-3" /> Start
+                    <.icon name="hero-play" class="w-5 h-5" />
+                    <span class="text-sm">Start Ollama</span>
                   </button>
                 <% end %>
-                <%= if @ollama_status == :running and @start_command_configured do %>
+                <%= if @ollama_status == :running do %>
                   <button
                     phx-click="restart_ollama"
                     id="restart-ollama-btn"
-                    class="ml-1 px-2 py-0.5 text-xs font-medium bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors flex items-center gap-1"
-                    title="Restart Ollama (useful for runaway responses)"
+                    class="px-4 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2 hover:bg-yellow-900/50 hover:border-yellow-700 hover:text-yellow-200"
+                    title="Restart Ollama — useful for clearing stuck or runaway responses"
                   >
-                    <.icon name="hero-arrow-path" class="w-3 h-3" /> Restart
+                    <.icon name="hero-arrow-path" class="w-5 h-5" />
+                    <span class="text-sm">Restart</span>
                   </button>
                   <button
                     phx-click="kill_ollama"
                     id="kill-ollama-btn"
-                    class="ml-1 px-2 py-0.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors flex items-center gap-1"
-                    title="Kill Ollama process"
+                    class="px-4 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2 hover:bg-red-900/50 hover:border-red-700 hover:text-red-200"
+                    title="Kill the Ollama process immediately"
                   >
-                    <.icon name="hero-x-circle" class="w-3 h-3" /> Kill
+                    <.icon name="hero-x-circle" class="w-5 h-5" />
+                    <span class="text-sm">Kill</span>
                   </button>
                 <% end %>
               </div>
             </div>
-          </div>
-
-          <%!-- Model selector --%>
-          <%= if @available_models != [] do %>
-            <div class="mb-4">
-              <label class="text-sm text-gray-300 mb-1 block">Model</label>
-              <select
-                id="model-select"
-                class="w-full bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                phx-hook=".ModelSelector"
-                name="model"
-              >
-                <option
-                  :for={model <- @available_models}
-                  value={model}
-                  selected={model == @selected_model}
-                >
-                  {model}
-                </option>
-              </select>
-            </div>
           <% end %>
 
-          <%!-- Health Check Status --%>
-          <%= if @health_check_enabled do %>
+          <%!-- Model selector (styled to match conversations container) --%>
+          <%= if @available_models != [] do %>
             <div class="mb-4">
-              <label class="text-sm text-gray-300 mb-1 block">Health Check Status</label>
               <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
-                <div class="px-3 py-2 flex items-center justify-between">
-                  <span class="text-xs">
-                    <%= if @health_check_healthy do %>
-                      <span class="text-green-400">● Healthy</span>
-                    <% else %>
-                      <span class="text-red-400">● Unreachable</span>
-                    <% end %>
-                  </span>
+                <div class="flex items-center gap-2 px-3">
+                  <.icon name="hero-cpu-chip" class="w-4 h-4 text-gray-400 flex-shrink-0" />
+                  <select
+                    id="model-select"
+                    class="flex-1 bg-transparent text-white text-sm py-2.5 border-0 focus:ring-0 focus:outline-none cursor-pointer appearance-none"
+                    phx-hook=".ModelSelector"
+                    name="model"
+                  >
+                    <option
+                      :for={model <- @available_models}
+                      value={model}
+                      selected={model == @selected_model}
+                    >
+                      {model}
+                    </option>
+                  </select>
+                  <.icon
+                    name="hero-chevron-up-down"
+                    class="w-4 h-4 text-gray-500 flex-shrink-0 pointer-events-none"
+                  />
                 </div>
               </div>
             </div>
@@ -1502,7 +1574,7 @@ defmodule OllamaChatWeb.ChatLive do
           </div>
 
           <%!-- Action buttons --%>
-          <div class="flex items-center gap-2 mb-4">
+          <div class="flex flex-wrap items-center gap-2 mb-4">
             <%!-- Export dropdown --%>
             <div class="relative" id="export-menu">
               <button
@@ -1570,35 +1642,20 @@ defmodule OllamaChatWeb.ChatLive do
               <.icon name="hero-trash" class="w-5 h-5" />
               <span class="text-sm">Clear All</span>
             </button>
-          </div>
 
-          <%!-- Settings button --%>
-          <div class="mb-4">
+            <%!-- Settings button (same style as Export / Clear All) --%>
             <button
               type="button"
               phx-click="open_settings"
               id="open-settings-btn"
-              class="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-3"
+              class="group px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2"
+              title={settings_button_tooltip(assigns)}
             >
-              <.icon name="hero-cog-6-tooth" class="w-5 h-5 text-gray-400" />
-              <span class="text-sm font-medium">Settings</span>
-              <div class="flex items-center gap-1.5 ml-auto">
-                <%= if @system_prompt != "" do %>
-                  <span class="px-1.5 py-0.5 text-xs bg-blue-600 text-white rounded-full">
-                    Prompt
-                  </span>
-                <% end %>
-                <%= if generation_params_customized?(@generation_params) do %>
-                  <span class="px-1.5 py-0.5 text-xs bg-amber-600 text-white rounded-full">
-                    Custom
-                  </span>
-                <% end %>
-                <%= if @mcp_enabled? and map_size(@mcp_tools) > 0 do %>
-                  <span class="px-1.5 py-0.5 text-xs bg-purple-600 text-white rounded-full">
-                    MCP {map_size(@mcp_tools)}
-                  </span>
-                <% end %>
-              </div>
+              <.icon name="hero-cog-6-tooth" class="w-5 h-5 animate-gear-hover" />
+              <span class="text-sm">Settings</span>
+              <%= if @system_prompt != "" or generation_params_customized?(@generation_params) do %>
+                <span class="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+              <% end %>
             </button>
           </div>
 
@@ -1923,37 +1980,50 @@ defmodule OllamaChatWeb.ChatLive do
             <%!-- Settings Dialog --%>
             <%= if @show_settings do %>
               <div
-                class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+                class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-dialog-overlay"
                 phx-click="close_settings"
                 phx-window-keydown="close_settings"
                 phx-key="Escape"
                 id="settings-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="settings-dialog-title"
+                phx-hook=".FocusTrap"
               >
                 <div
-                  class="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col"
+                  class="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-dialog-content"
                   phx-click-stop
                   id="settings-dialog"
+                  tabindex="-1"
                 >
                   <%!-- Dialog Header --%>
                   <div class="flex items-center justify-between px-6 py-4 border-b border-slate-700">
-                    <h2 class="text-xl font-bold text-white">Settings</h2>
+                    <h2 class="text-xl font-bold text-white" id="settings-dialog-title">Settings</h2>
                     <button
                       type="button"
                       phx-click="close_settings"
                       class="p-1 text-gray-400 hover:text-white transition-colors rounded-lg hover:bg-slate-700"
                       id="close-settings-btn"
+                      aria-label="Close settings"
                     >
                       <.icon name="hero-x-mark" class="w-5 h-5" />
                     </button>
                   </div>
 
                   <%!-- Tab Navigation --%>
-                  <div class="flex border-b border-slate-700 px-6">
+                  <div
+                    class="flex border-b border-slate-700 px-6"
+                    role="tablist"
+                    aria-label="Settings tabs"
+                  >
                     <button
                       type="button"
                       phx-click="switch_settings_tab"
                       phx-value-tab="general"
                       id="settings-tab-general"
+                      role="tab"
+                      aria-selected={to_string(@settings_tab == :general)}
+                      aria-controls="settings-general-tab-panel"
                       class={[
                         "px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
                         if(@settings_tab == :general,
@@ -1970,6 +2040,9 @@ defmodule OllamaChatWeb.ChatLive do
                       phx-click="switch_settings_tab"
                       phx-value-tab="generation"
                       id="settings-tab-generation"
+                      role="tab"
+                      aria-selected={to_string(@settings_tab == :generation)}
+                      aria-controls="settings-generation-tab-panel"
                       class={[
                         "px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
                         if(@settings_tab == :generation,
@@ -1991,6 +2064,9 @@ defmodule OllamaChatWeb.ChatLive do
                       phx-click="switch_settings_tab"
                       phx-value-tab="mcp"
                       id="settings-tab-mcp"
+                      role="tab"
+                      aria-selected={to_string(@settings_tab == :mcp)}
+                      aria-controls="settings-mcp-tab-panel"
                       class={[
                         "px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
                         if(@settings_tab == :mcp,
@@ -2013,7 +2089,12 @@ defmodule OllamaChatWeb.ChatLive do
                   <div class="flex-1 overflow-y-auto px-6 py-5">
                     <%!-- General Tab --%>
                     <%= if @settings_tab == :general do %>
-                      <div class="space-y-6" id="settings-general-tab">
+                      <div
+                        class="space-y-6 animate-tab-panel"
+                        id="settings-general-tab-panel"
+                        role="tabpanel"
+                        aria-labelledby="settings-tab-general"
+                      >
                         <%!-- System Prompt Section --%>
                         <div>
                           <div class="flex items-center justify-between mb-2">
@@ -2065,7 +2146,12 @@ defmodule OllamaChatWeb.ChatLive do
 
                     <%!-- Generation Tab --%>
                     <%= if @settings_tab == :generation do %>
-                      <div id="settings-generation-tab">
+                      <div
+                        class="animate-tab-panel"
+                        id="settings-generation-tab-panel"
+                        role="tabpanel"
+                        aria-labelledby="settings-tab-generation"
+                      >
                         <.form
                           for={to_form(@generation_params)}
                           id="settings-generation-params-form"
@@ -2199,7 +2285,12 @@ defmodule OllamaChatWeb.ChatLive do
 
                     <%!-- MCP Servers Tab --%>
                     <%= if @settings_tab == :mcp do %>
-                      <div class="space-y-5" id="settings-mcp-tab">
+                      <div
+                        class="space-y-5 animate-tab-panel"
+                        id="settings-mcp-tab-panel"
+                        role="tabpanel"
+                        aria-labelledby="settings-tab-mcp"
+                      >
                         <%= if not @mcp_enabled? do %>
                           <div class="text-center py-8">
                             <.icon
@@ -2219,7 +2310,7 @@ defmodule OllamaChatWeb.ChatLive do
                           <%!-- Error banner --%>
                           <%= if @mcp_form_error do %>
                             <div
-                              class="px-4 py-3 bg-red-900/30 border border-red-700 rounded-lg text-sm text-red-300"
+                              class="px-4 py-3 bg-red-900/30 border border-red-700 rounded-lg text-sm text-red-300 animate-error-in"
                               id="mcp-form-error"
                             >
                               <div class="flex items-center gap-2">
@@ -2796,6 +2887,45 @@ defmodule OllamaChatWeb.ChatLive do
       </div>
     </div>
 
+    <%!-- Toast Notification --%>
+    <%= if @toast_message do %>
+      <div
+        class="fixed bottom-6 right-6 z-[60] max-w-sm animate-toast-in"
+        id="toast-notification"
+        phx-click="dismiss_toast"
+      >
+        <div class={[
+          "flex items-center gap-3 px-4 py-3 rounded-lg shadow-xl border backdrop-blur-sm",
+          case @toast_type do
+            :success -> "bg-green-900/90 border-green-700 text-green-200"
+            :warning -> "bg-amber-900/90 border-amber-700 text-amber-200"
+            :error -> "bg-red-900/90 border-red-700 text-red-200"
+            _ -> "bg-slate-800/90 border-slate-600 text-gray-200"
+          end
+        ]}>
+          <%= case @toast_type do %>
+            <% :success -> %>
+              <.icon name="hero-check-circle" class="w-5 h-5 flex-shrink-0 text-green-400" />
+            <% :warning -> %>
+              <.icon name="hero-exclamation-triangle" class="w-5 h-5 flex-shrink-0 text-amber-400" />
+            <% :error -> %>
+              <.icon name="hero-x-circle" class="w-5 h-5 flex-shrink-0 text-red-400" />
+            <% _ -> %>
+              <.icon name="hero-information-circle" class="w-5 h-5 flex-shrink-0 text-blue-400" />
+          <% end %>
+          <span class="text-sm font-medium">{@toast_message}</span>
+          <button
+            type="button"
+            phx-click="dismiss_toast"
+            class="ml-auto p-1 hover:bg-white/10 rounded transition-colors"
+            aria-label="Dismiss notification"
+          >
+            <.icon name="hero-x-mark" class="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    <% end %>
+
     <%!-- Auto-scroll to bottom hook --%>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollToBottom">
       export default {
@@ -3236,6 +3366,77 @@ defmodule OllamaChatWeb.ChatLive do
       }
     </script>
 
+    <%!-- Focus Trap hook for modal dialogs --%>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".FocusTrap">
+      export default {
+        mounted() {
+          this.previouslyFocused = document.activeElement;
+
+          this.focusableSelector =
+            'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+          this.handleKeyDown = (e) => {
+            if (e.key === "Tab") {
+              const focusable = Array.from(this.el.querySelectorAll(this.focusableSelector));
+              if (focusable.length === 0) return;
+
+              const first = focusable[0];
+              const last = focusable[focusable.length - 1];
+
+              if (e.shiftKey) {
+                if (document.activeElement === first) {
+                  e.preventDefault();
+                  last.focus();
+                }
+              } else {
+                if (document.activeElement === last) {
+                  e.preventDefault();
+                  first.focus();
+                }
+              }
+            }
+
+            if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+              const tab = e.target.closest('[role="tab"]');
+              if (!tab) return;
+
+              const tablist = tab.closest('[role="tablist"]');
+              if (!tablist) return;
+
+              const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+              const index = tabs.indexOf(tab);
+              if (index === -1) return;
+
+              let nextIndex;
+              if (e.key === "ArrowRight") {
+                nextIndex = (index + 1) % tabs.length;
+              } else {
+                nextIndex = (index - 1 + tabs.length) % tabs.length;
+              }
+
+              tabs[nextIndex].focus();
+              tabs[nextIndex].click();
+              e.preventDefault();
+            }
+          };
+
+          this.el.addEventListener("keydown", this.handleKeyDown);
+
+          requestAnimationFrame(() => {
+            const first = this.el.querySelector(this.focusableSelector);
+            if (first) first.focus();
+          });
+        },
+
+        destroyed() {
+          this.el.removeEventListener("keydown", this.handleKeyDown);
+          if (this.previouslyFocused && typeof this.previouslyFocused.focus === "function") {
+            this.previouslyFocused.focus();
+          }
+        }
+      }
+    </script>
+
     <%!-- Storage Settings Manager hook for preference persistence --%>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".StorageSettings">
       export default {
@@ -3364,6 +3565,91 @@ defmodule OllamaChatWeb.ChatLive do
 
   defp generation_params_customized?(params) do
     params != default_generation_params()
+  end
+
+  # Synthesises the combined Ollama connection + health-check state into a
+  # single set of display values: {dot_class, label, text_class, bg_class}.
+  defp ollama_status_display(assigns) do
+    cond do
+      assigns.ollama_status == :unknown ->
+        {"bg-yellow-500 animate-pulse", "Starting…", "text-yellow-400",
+         "bg-yellow-900/20 border-yellow-800/50"}
+
+      assigns.ollama_status == :stopped ->
+        {"bg-red-500", "Disconnected", "text-red-400", "bg-red-900/20 border-red-800/50"}
+
+      assigns.health_check_enabled and not assigns.health_check_healthy ->
+        {"bg-amber-500 animate-pulse", "Unhealthy", "text-amber-400",
+         "bg-amber-900/20 border-amber-800/50"}
+
+      true ->
+        {"bg-green-500", "Connected", "text-gray-400", "bg-slate-800/60 border-slate-700/50"}
+    end
+  end
+
+  defp ollama_status_tooltip(assigns) do
+    base =
+      case assigns.ollama_status do
+        :running -> "Ollama is running and accepting requests"
+        :stopped -> "Ollama is not running"
+        :unknown -> "Checking Ollama status…"
+      end
+
+    health =
+      if assigns.health_check_enabled do
+        if assigns.health_check_healthy,
+          do: " · Health check: passing",
+          else: " · Health check: failing — Ollama is not responding to periodic probes"
+      else
+        ""
+      end
+
+    base <> health
+  end
+
+  defp mcp_status_tooltip(assigns) do
+    tool_count = map_size(assigns.mcp_tools)
+    server_configs = assigns.mcp_server_configs
+
+    enabled_count =
+      case server_configs do
+        [] -> 0
+        configs -> Enum.count(configs, & &1.enabled)
+      end
+
+    connected_count =
+      assigns.mcp_server_status
+      |> Enum.count(fn {_name, info} -> info[:status] == :connected end)
+
+    cond do
+      tool_count > 0 ->
+        "MCP: #{tool_count} tools available from #{connected_count} connected server(s)"
+
+      enabled_count > 0 ->
+        "MCP: #{enabled_count} server(s) enabled, waiting for tools"
+
+      true ->
+        "MCP: enabled but no servers configured"
+    end
+  end
+
+  defp settings_button_tooltip(assigns) do
+    parts =
+      [
+        if(assigns.system_prompt != "", do: "Custom system prompt active"),
+        if(generation_params_customized?(assigns.generation_params),
+          do: "Generation parameters customized"
+        ),
+        if(assigns.mcp_enabled? and map_size(assigns.mcp_tools) > 0,
+          do: "#{map_size(assigns.mcp_tools)} MCP tools available"
+        )
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    case parts do
+      [] -> "Open settings"
+      _ -> "Settings: " <> Enum.join(parts, ", ")
+    end
   end
 
   defp fetch_mcp_tools do

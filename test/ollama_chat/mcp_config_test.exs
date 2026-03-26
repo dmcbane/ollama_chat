@@ -741,4 +741,106 @@ defmodule OllamaChat.MCPConfigTest do
       assert mem.requires_approval == true
     end
   end
+
+  describe "parse_json_contents/1 edge cases (via load/0)" do
+    test "empty file returns {:ok, []}", %{tmp_config_path: tmp_config_path} do
+      File.write!(tmp_config_path, "")
+
+      assert {:ok, []} = MCPConfig.load()
+    end
+
+    test "whitespace-only file returns {:ok, []}", %{tmp_config_path: tmp_config_path} do
+      File.write!(tmp_config_path, "   \n\t\n  ")
+
+      assert {:ok, []} = MCPConfig.load()
+    end
+
+    test "file with UTF-8 BOM prefix parses correctly", %{tmp_config_path: tmp_config_path} do
+      json =
+        Jason.encode!(%{
+          "servers" => [
+            %{
+              "name" => "bom_server",
+              "display_name" => "BOM Server",
+              "command" => "/usr/bin/bom"
+            }
+          ]
+        })
+
+      bom = <<0xEF, 0xBB, 0xBF>>
+      File.write!(tmp_config_path, bom <> json)
+
+      assert {:ok, [server]} = MCPConfig.load()
+      assert server.name == :bom_server
+      assert server.display_name == "BOM Server"
+      assert server.command == "/usr/bin/bom"
+    end
+
+    test "file with invalid JSON returns descriptive error", %{tmp_config_path: tmp_config_path} do
+      File.write!(tmp_config_path, "{not json at all!!!")
+
+      assert {:error, message} = MCPConfig.load()
+      assert is_binary(message)
+      assert message =~ "JSON parse error"
+    end
+
+    test "file with valid JSON but wrong structure returns error", %{
+      tmp_config_path: tmp_config_path
+    } do
+      File.write!(tmp_config_path, Jason.encode!(%{"not_servers" => []}))
+
+      assert {:error, message} = MCPConfig.load()
+      assert message =~ "expected JSON object with a \"servers\" key"
+    end
+  end
+
+  describe "validate_command_path/1" do
+    test "empty command returns error" do
+      assert {:error, "command is required"} = MCPConfig.validate_command_path("")
+    end
+
+    test "whitespace-only command returns error" do
+      assert {:error, "command is required"} = MCPConfig.validate_command_path("   ")
+    end
+
+    test "absolute path to existing executable returns :ok" do
+      # /usr/bin/env should exist and be executable on macOS/Linux
+      assert :ok = MCPConfig.validate_command_path("/usr/bin/env")
+    end
+
+    test "absolute path to non-existent file returns warning" do
+      assert {:warning, message} = MCPConfig.validate_command_path("/no/such/binary/here")
+      assert message =~ "Command path does not exist"
+      assert message =~ "/no/such/binary/here"
+    end
+
+    test "absolute path to non-executable file returns warning", %{test_dir: test_dir} do
+      non_exec = test_dir |> Path.join("not_executable") |> Path.expand()
+      File.write!(non_exec, "#!/bin/sh\necho hello")
+      File.chmod!(non_exec, 0o644)
+
+      assert {:warning, message} = MCPConfig.validate_command_path(non_exec)
+      assert message =~ "Command path is not executable"
+    end
+
+    test "bare command that exists in PATH returns :ok" do
+      # "env" should be available in PATH on any POSIX system
+      assert :ok = MCPConfig.validate_command_path("env")
+    end
+
+    test "bare command not in PATH returns warning" do
+      assert {:warning, message} =
+               MCPConfig.validate_command_path("definitely_not_a_real_command_xyz")
+
+      assert message =~ "not found in PATH"
+      assert message =~ "definitely_not_a_real_command_xyz"
+    end
+
+    test "tilde path is expanded before checking", %{test_dir: _test_dir} do
+      # A tilde path to something that doesn't exist should still expand and warn
+      assert {:warning, message} = MCPConfig.validate_command_path("~/no_such_mcp_binary")
+      assert message =~ "Command path does not exist"
+      refute message =~ "~"
+    end
+  end
 end
