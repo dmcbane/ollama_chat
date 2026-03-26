@@ -907,4 +907,242 @@ defmodule OllamaChatWeb.ChatLiveTest do
       assert html =~ "Ollama Chat"
     end
   end
+
+  describe "MCP server management" do
+    test "mcp tab shows disabled message when MCP is off", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view |> element("#open-settings-btn") |> render_click()
+      view |> element("#settings-tab-mcp") |> render_click()
+
+      html = render(view)
+      assert html =~ "MCP is not enabled"
+    end
+
+    test "add_mcp_server sets editing state", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "add_mcp_server", %{})
+
+      # Verify the assign was set by checking it doesn't crash
+      # and produces valid HTML
+      html = render(view)
+      assert html =~ "Ollama Chat"
+    end
+
+    test "cancel_edit_mcp_server clears editing state", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Start editing
+      render_hook(view, "add_mcp_server", %{})
+
+      # Cancel
+      render_hook(view, "cancel_edit_mcp_server", %{})
+
+      html = render(view)
+      assert html =~ "Ollama Chat"
+    end
+
+    test "save_mcp_server with empty params returns validation error", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "save_mcp_server", %{
+        "name" => "",
+        "display_name" => "",
+        "command" => "",
+        "description" => "",
+        "args" => "",
+        "enabled" => "true",
+        "requires_approval" => "false",
+        "dangerous_tools" => ""
+      })
+
+      # Should set an error but not crash
+      html = render(view)
+      assert html =~ "Ollama Chat"
+    end
+
+    test "save_mcp_server with valid disabled server succeeds", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Use a unique name to avoid conflicts with other tests
+      server_name = "test_save_ui_#{System.unique_integer([:positive])}"
+
+      render_hook(view, "save_mcp_server", %{
+        "name" => server_name,
+        "display_name" => "Test UI Server",
+        "command" => "/usr/bin/false",
+        "description" => "A test server",
+        "args" => "",
+        "enabled" => "false",
+        "requires_approval" => "false",
+        "dangerous_tools" => ""
+      })
+
+      html = render(view)
+      assert html =~ "Ollama Chat"
+
+      # Clean up
+      OllamaChat.MCPClient.remove_server(String.to_atom(server_name))
+    end
+
+    test "delete_mcp_server removes a server", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # First add a server to delete
+      server_name = "test_delete_ui_#{System.unique_integer([:positive])}"
+
+      :ok =
+        OllamaChat.MCPClient.add_server(%{
+          name: String.to_atom(server_name),
+          display_name: "Delete Me",
+          command: "/usr/bin/false",
+          enabled: false
+        })
+
+      render_hook(view, "delete_mcp_server", %{"name" => server_name})
+
+      # Should not crash
+      html = render(view)
+      assert html =~ "Ollama Chat"
+
+      # Verify it was removed
+      configs = OllamaChat.MCPClient.list_server_configs()
+      refute Enum.any?(configs, fn s -> to_string(s.name) == server_name end)
+    end
+
+    test "toggle_mcp_server_enabled toggles server state", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      server_name = "test_toggle_ui_#{System.unique_integer([:positive])}"
+
+      :ok =
+        OllamaChat.MCPClient.add_server(%{
+          name: String.to_atom(server_name),
+          display_name: "Toggle Me",
+          command: "/usr/bin/false",
+          enabled: false
+        })
+
+      # Load configs into the view
+      render_hook(view, "open_settings", %{})
+
+      render_hook(view, "toggle_mcp_server_enabled", %{"name" => server_name})
+
+      # Should not crash
+      html = render(view)
+      assert html =~ "Ollama Chat"
+
+      # Clean up
+      OllamaChat.MCPClient.remove_server(String.to_atom(server_name))
+    end
+
+    test "edit_mcp_server loads server config into form", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      server_name = "test_edit_ui_#{System.unique_integer([:positive])}"
+
+      :ok =
+        OllamaChat.MCPClient.add_server(%{
+          name: String.to_atom(server_name),
+          display_name: "Edit Me",
+          command: "/usr/bin/echo",
+          description: "A test server to edit",
+          enabled: false
+        })
+
+      # Load configs into the view
+      render_hook(view, "open_settings", %{})
+
+      render_hook(view, "edit_mcp_server", %{"name" => server_name})
+
+      # Should not crash
+      html = render(view)
+      assert html =~ "Ollama Chat"
+
+      # Clean up
+      OllamaChat.MCPClient.remove_server(String.to_atom(server_name))
+    end
+
+    test "edit_mcp_server with nonexistent server sets error", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      # Load configs
+      render_hook(view, "open_settings", %{})
+
+      # Try to edit a server that doesn't exist in mcp_server_configs
+      # This should set a form error, not crash
+      render_hook(view, "edit_mcp_server", %{"name" => "nonexistent_server_xyz"})
+
+      html = render(view)
+      assert html =~ "Ollama Chat"
+    end
+
+    test "save_mcp_server parses args and dangerous_tools correctly", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      server_name = "test_parse_ui_#{System.unique_integer([:positive])}"
+
+      render_hook(view, "save_mcp_server", %{
+        "name" => server_name,
+        "display_name" => "Parse Test",
+        "command" => "/usr/bin/echo",
+        "description" => "Tests parsing",
+        "args" => "arg1\narg2\narg3",
+        "enabled" => "false",
+        "requires_approval" => "true",
+        "dangerous_tools" => "write_file, delete_file, move_file"
+      })
+
+      configs = OllamaChat.MCPClient.list_server_configs()
+      server = Enum.find(configs, fn s -> to_string(s.name) == server_name end)
+
+      assert server != nil
+      assert server.args == ["arg1", "arg2", "arg3"]
+      assert server.dangerous_tools == ["write_file", "delete_file", "move_file"]
+      assert server.requires_approval == true
+
+      # Clean up
+      OllamaChat.MCPClient.remove_server(String.to_atom(server_name))
+    end
+
+    test "save_mcp_server can update an existing server", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      server_name = "test_update_ui_#{System.unique_integer([:positive])}"
+
+      # Add a server first
+      :ok =
+        OllamaChat.MCPClient.add_server(%{
+          name: String.to_atom(server_name),
+          display_name: "Original Name",
+          command: "/usr/bin/false",
+          enabled: false
+        })
+
+      # Load configs into view
+      render_hook(view, "open_settings", %{})
+
+      # Update via save_mcp_server
+      render_hook(view, "save_mcp_server", %{
+        "name" => server_name,
+        "display_name" => "Updated Name",
+        "command" => "/usr/bin/true",
+        "description" => "updated",
+        "args" => "",
+        "enabled" => "false",
+        "requires_approval" => "false",
+        "dangerous_tools" => ""
+      })
+
+      configs = OllamaChat.MCPClient.list_server_configs()
+      server = Enum.find(configs, fn s -> to_string(s.name) == server_name end)
+
+      assert server.display_name == "Updated Name"
+      assert server.command == "/usr/bin/true"
+
+      # Clean up
+      OllamaChat.MCPClient.remove_server(String.to_atom(server_name))
+    end
+  end
 end

@@ -32,8 +32,13 @@ config :ollama_chat,
   stream_timeout_ms: String.to_integer(System.get_env("OLLAMA_STREAM_TIMEOUT_MS", "30000")),
   health_check_enabled: System.get_env("OLLAMA_HEALTH_CHECK_ENABLED", "true") == "true",
   health_check_interval:
-    String.to_integer(System.get_env("OLLAMA_HEALTH_CHECK_INTERVAL_MS", "30000")),
-  mcp_config_path: System.get_env("MCP_CONFIG_PATH")
+    String.to_integer(System.get_env("OLLAMA_HEALTH_CHECK_INTERVAL_MS", "30000"))
+
+# Only override mcp_config_path when the env var is explicitly set,
+# so we don't clobber values from dev.exs or test.exs with nil
+if mcp_config_path = System.get_env("MCP_CONFIG_PATH") do
+  config :ollama_chat, mcp_config_path: mcp_config_path
+end
 
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.

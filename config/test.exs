@@ -26,3 +26,8 @@ config :phoenix_live_view,
 # Sort query params output of verified routes for robust url comparisons
 config :phoenix,
   sort_verified_routes_query_params: true
+
+# MCP config path for tests — use a temp directory to avoid polluting real config
+config :ollama_chat,
+       :mcp_config_path,
+       Path.join(System.tmp_dir!(), "ollama_chat_test/mcp_servers.json")

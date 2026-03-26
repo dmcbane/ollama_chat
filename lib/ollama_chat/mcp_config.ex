@@ -41,7 +41,7 @@ defmodule OllamaChat.MCPConfig do
   """
   @spec config_path() :: String.t()
   def config_path do
-    path = Application.get_env(:ollama_chat, :mcp_config_path, @default_config_path)
+    path = Application.get_env(:ollama_chat, :mcp_config_path) || @default_config_path
     Path.expand(path)
   end
 

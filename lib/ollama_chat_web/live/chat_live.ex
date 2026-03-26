@@ -67,6 +67,9 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:save_intermediate_events, false)
       |> assign(:show_settings, false)
       |> assign(:settings_tab, :general)
+      |> assign(:mcp_server_configs, [])
+      |> assign(:editing_mcp_server, nil)
+      |> assign(:mcp_form_error, nil)
       |> assign(:health_check_enabled, OllamaClient.health_check_enabled?())
       |> assign(:health_check_healthy, true)
       |> assign(:health_check_timer, nil)
@@ -657,11 +660,14 @@ defmodule OllamaChatWeb.ChatLive do
 
   @impl true
   def handle_event("open_settings", _params, socket) do
-    # Refresh MCP status when opening settings
     socket =
       if socket.assigns.mcp_enabled? do
         server_status = MCPClient.server_info()
-        assign(socket, :mcp_server_status, server_status)
+        configs = MCPClient.list_server_configs()
+
+        socket
+        |> assign(:mcp_server_status, server_status)
+        |> assign(:mcp_server_configs, configs)
       else
         socket
       end
@@ -678,6 +684,173 @@ defmodule OllamaChatWeb.ChatLive do
   def handle_event("switch_settings_tab", %{"tab" => tab}, socket) do
     tab_atom = String.to_existing_atom(tab)
     {:noreply, assign(socket, :settings_tab, tab_atom)}
+  end
+
+  @impl true
+  def handle_event("add_mcp_server", _params, socket) do
+    new_server = %{
+      "name" => "",
+      "display_name" => "",
+      "description" => "",
+      "command" => "",
+      "args" => "",
+      "enabled" => true,
+      "requires_approval" => false,
+      "dangerous_tools" => ""
+    }
+
+    {:noreply,
+     socket
+     |> assign(:editing_mcp_server, new_server)
+     |> assign(:mcp_form_error, nil)}
+  end
+
+  @impl true
+  def handle_event("edit_mcp_server", %{"name" => name}, socket) do
+    name_atom = String.to_atom(name)
+
+    case Enum.find(socket.assigns.mcp_server_configs, fn s -> s.name == name_atom end) do
+      nil ->
+        {:noreply, assign(socket, :mcp_form_error, "Server not found")}
+
+      config ->
+        form_data = %{
+          "name" => to_string(config.name),
+          "display_name" => config.display_name,
+          "description" => Map.get(config, :description, ""),
+          "command" => config.command,
+          "args" => Enum.join(Map.get(config, :args, []), "\n"),
+          "enabled" => Map.get(config, :enabled, true),
+          "requires_approval" => Map.get(config, :requires_approval, false),
+          "dangerous_tools" => Enum.join(Map.get(config, :dangerous_tools, []), ", ")
+        }
+
+        {:noreply,
+         socket
+         |> assign(:editing_mcp_server, form_data)
+         |> assign(:mcp_form_error, nil)}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_edit_mcp_server", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:editing_mcp_server, nil)
+     |> assign(:mcp_form_error, nil)}
+  end
+
+  @impl true
+  def handle_event("save_mcp_server", params, socket) do
+    # Parse form data into server config
+    args =
+      params["args"]
+      |> String.split("\n")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    dangerous_tools =
+      params["dangerous_tools"]
+      |> String.split(",")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    config = %{
+      name: String.to_atom(String.trim(params["name"])),
+      display_name: String.trim(params["display_name"]),
+      description: String.trim(params["description"] || ""),
+      command: String.trim(params["command"]),
+      args: args,
+      enabled: params["enabled"] == "true",
+      requires_approval: params["requires_approval"] == "true",
+      dangerous_tools: dangerous_tools
+    }
+
+    # Determine if this is an add or update by checking the actual MCPClient state
+    # (not local assigns, which may be stale if MCP was disabled when settings opened)
+    current_configs = MCPClient.list_server_configs()
+    existing = Enum.find(current_configs, fn s -> s.name == config.name end)
+
+    result =
+      if existing do
+        MCPClient.update_server(config.name, config)
+      else
+        MCPClient.add_server(config)
+      end
+
+    case result do
+      :ok ->
+        configs = MCPClient.list_server_configs()
+        server_status = MCPClient.server_info()
+
+        {:noreply,
+         socket
+         |> assign(:mcp_server_configs, configs)
+         |> assign(:mcp_server_status, server_status)
+         |> assign(:mcp_tools, fetch_mcp_tools())
+         |> assign(:editing_mcp_server, nil)
+         |> assign(:mcp_form_error, nil)}
+
+      {:error, {:validation, errors}} ->
+        {:noreply, assign(socket, :mcp_form_error, Enum.join(errors, ". "))}
+
+      {:error, message} when is_binary(message) ->
+        {:noreply, assign(socket, :mcp_form_error, message)}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :mcp_form_error, inspect(reason))}
+    end
+  end
+
+  @impl true
+  def handle_event("delete_mcp_server", %{"name" => name}, socket) do
+    name_atom = String.to_atom(name)
+
+    case MCPClient.remove_server(name_atom) do
+      :ok ->
+        configs = MCPClient.list_server_configs()
+        server_status = MCPClient.server_info()
+
+        {:noreply,
+         socket
+         |> assign(:mcp_server_configs, configs)
+         |> assign(:mcp_server_status, server_status)
+         |> assign(:mcp_tools, fetch_mcp_tools())
+         |> assign(:editing_mcp_server, nil)
+         |> assign(:mcp_form_error, nil)}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :mcp_form_error, inspect(reason))}
+    end
+  end
+
+  @impl true
+  def handle_event("toggle_mcp_server_enabled", %{"name" => name}, socket) do
+    name_atom = String.to_atom(name)
+
+    case Enum.find(socket.assigns.mcp_server_configs, fn s -> s.name == name_atom end) do
+      nil ->
+        {:noreply, socket}
+
+      config ->
+        new_enabled = !config.enabled
+
+        case MCPClient.toggle_server(name_atom, new_enabled) do
+          :ok ->
+            configs = MCPClient.list_server_configs()
+            server_status = MCPClient.server_info()
+
+            # Give a moment for tool discovery after toggling
+            {:noreply,
+             socket
+             |> assign(:mcp_server_configs, configs)
+             |> assign(:mcp_server_status, server_status)
+             |> assign(:mcp_tools, fetch_mcp_tools())}
+
+          {:error, _reason} ->
+            {:noreply, socket}
+        end
+    end
   end
 
   @impl true
@@ -2043,97 +2216,381 @@ defmodule OllamaChatWeb.ChatLive do
                             </p>
                           </div>
                         <% else %>
-                          <%!-- Server Status --%>
-                          <%= if map_size(@mcp_server_status) > 0 do %>
-                            <div>
-                              <label class="text-sm font-medium text-gray-200 mb-3 block">
-                                Server Status
-                              </label>
-                              <div class="space-y-2">
-                                <%= for {name, info} <- @mcp_server_status do %>
-                                  <div class="flex items-center justify-between px-4 py-3 bg-slate-900 rounded-lg border border-slate-700">
-                                    <div class="flex items-center gap-3">
-                                      <%= cond do %>
-                                        <% info.status == :connected -> %>
-                                          <span class="w-2.5 h-2.5 bg-green-500 rounded-full"></span>
-                                        <% info.status == :restarting -> %>
-                                          <span class="w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse">
-                                          </span>
-                                        <% true -> %>
-                                          <span class="w-2.5 h-2.5 bg-red-500 rounded-full"></span>
-                                      <% end %>
-                                      <div>
-                                        <div class="text-sm text-white font-medium">
-                                          {info.display_name}
-                                        </div>
-                                        <div class="text-xs text-gray-500">{name}</div>
-                                      </div>
-                                    </div>
-                                    <div class="text-right">
-                                      <%= cond do %>
-                                        <% info.status == :connected -> %>
-                                          <span class="text-xs text-green-400">Connected</span>
-                                          <%= if info[:restart_count] && info.restart_count > 0 do %>
-                                            <div class="text-xs text-yellow-400">
-                                              restarted {info.restart_count}x
-                                            </div>
-                                          <% end %>
-                                        <% info.status == :restarting -> %>
-                                          <span class="text-xs text-yellow-400">Restarting...</span>
-                                        <% true -> %>
-                                          <span class="text-xs text-red-400">Disconnected</span>
-                                      <% end %>
-                                    </div>
-                                  </div>
-                                <% end %>
+                          <%!-- Error banner --%>
+                          <%= if @mcp_form_error do %>
+                            <div
+                              class="px-4 py-3 bg-red-900/30 border border-red-700 rounded-lg text-sm text-red-300"
+                              id="mcp-form-error"
+                            >
+                              <div class="flex items-center gap-2">
+                                <.icon name="hero-exclamation-triangle" class="w-4 h-4 flex-shrink-0" />
+                                <span>{@mcp_form_error}</span>
                               </div>
                             </div>
                           <% end %>
 
-                          <%!-- Available Tools --%>
-                          <div>
-                            <label class="text-sm font-medium text-gray-200 mb-3 block">
-                              Available Tools
-                              <span class="ml-2 px-2 py-0.5 text-xs bg-purple-600/50 text-purple-300 rounded-full">
-                                {map_size(@mcp_tools)}
-                              </span>
-                            </label>
-                            <%= if map_size(@mcp_tools) == 0 do %>
-                              <p class="text-sm text-gray-500 py-4 text-center">
-                                No tools discovered yet. Servers may still be connecting.
-                              </p>
-                            <% else %>
-                              <div class="space-y-2 max-h-80 overflow-y-auto">
-                                <div
-                                  :for={{name, info} <- @mcp_tools}
-                                  class="px-4 py-3 bg-slate-900 rounded-lg border border-slate-700"
+                          <%= if @editing_mcp_server do %>
+                            <%!-- Add/Edit Server Form --%>
+                            <div id="mcp-server-form">
+                              <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-sm font-semibold text-white">
+                                  <%= if Enum.any?(@mcp_server_configs, fn s -> to_string(s.name) == @editing_mcp_server["name"] end) do %>
+                                    Edit Server
+                                  <% else %>
+                                    Add Server
+                                  <% end %>
+                                </h3>
+                                <button
+                                  type="button"
+                                  phx-click="cancel_edit_mcp_server"
+                                  class="text-xs text-gray-400 hover:text-white transition-colors"
+                                  id="cancel-edit-mcp-server"
                                 >
-                                  <div class="flex items-start justify-between gap-2">
-                                    <div class="flex-1 min-w-0">
-                                      <div class="font-medium text-blue-300 text-sm">{name}</div>
-                                      <div class="text-gray-400 text-xs mt-0.5 leading-relaxed">
-                                        {info.description}
-                                      </div>
-                                    </div>
-                                    <%= if info.requires_approval do %>
-                                      <span class="flex-shrink-0 px-1.5 py-0.5 text-xs bg-yellow-900/50 text-yellow-300 rounded whitespace-nowrap">
-                                        Approval
-                                      </span>
-                                    <% end %>
+                                  Cancel
+                                </button>
+                              </div>
+                              <.form
+                                for={to_form(@editing_mcp_server)}
+                                id="mcp-server-edit-form"
+                                phx-submit="save_mcp_server"
+                                class="space-y-4"
+                              >
+                                <div class="grid grid-cols-2 gap-4">
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-300 mb-1">
+                                      Server Name <span class="text-red-400">*</span>
+                                    </label>
+                                    <input
+                                      type="text"
+                                      name="name"
+                                      value={@editing_mcp_server["name"]}
+                                      placeholder="my_server"
+                                      required
+                                      class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
+                                      id="mcp-server-name"
+                                    />
+                                    <p class="text-xs text-gray-500 mt-1">
+                                      Unique identifier (no spaces)
+                                    </p>
                                   </div>
-                                  <div class="mt-1.5 text-gray-500 text-xs">
-                                    Server: <span class="text-gray-400">{info.server}</span>
+                                  <div>
+                                    <label class="block text-xs font-medium text-gray-300 mb-1">
+                                      Display Name <span class="text-red-400">*</span>
+                                    </label>
+                                    <input
+                                      type="text"
+                                      name="display_name"
+                                      value={@editing_mcp_server["display_name"]}
+                                      placeholder="My MCP Server"
+                                      required
+                                      class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
+                                      id="mcp-server-display-name"
+                                    />
                                   </div>
                                 </div>
-                              </div>
-                            <% end %>
-                          </div>
 
-                          <div class="mt-4 p-3 bg-slate-900/50 rounded-lg border border-dashed border-slate-600">
-                            <p class="text-xs text-gray-500 text-center">
-                              MCP server configuration coming soon. Currently configured in <code class="text-blue-400">config/dev.exs</code>.
-                            </p>
-                          </div>
+                                <div>
+                                  <label class="block text-xs font-medium text-gray-300 mb-1">
+                                    Description
+                                  </label>
+                                  <input
+                                    type="text"
+                                    name="description"
+                                    value={@editing_mcp_server["description"]}
+                                    placeholder="Brief description of what this server provides"
+                                    class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
+                                    id="mcp-server-description"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label class="block text-xs font-medium text-gray-300 mb-1">
+                                    Command <span class="text-red-400">*</span>
+                                  </label>
+                                  <input
+                                    type="text"
+                                    name="command"
+                                    value={@editing_mcp_server["command"]}
+                                    placeholder="/path/to/mcp-server or npx"
+                                    required
+                                    class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
+                                    id="mcp-server-command"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label class="block text-xs font-medium text-gray-300 mb-1">
+                                    Arguments
+                                  </label>
+                                  <textarea
+                                    name="args"
+                                    rows="2"
+                                    placeholder="One argument per line"
+                                    class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y placeholder-slate-500"
+                                    id="mcp-server-args"
+                                  >{@editing_mcp_server["args"]}</textarea>
+                                  <p class="text-xs text-gray-500 mt-1">One argument per line</p>
+                                </div>
+
+                                <div class="grid grid-cols-2 gap-4">
+                                  <label class="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="hidden"
+                                      name="enabled"
+                                      value="false"
+                                    />
+                                    <input
+                                      type="checkbox"
+                                      name="enabled"
+                                      value="true"
+                                      checked={@editing_mcp_server["enabled"]}
+                                      class="rounded border-gray-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900 bg-gray-700"
+                                    />
+                                    <span class="text-sm text-gray-300">Enabled</span>
+                                  </label>
+                                  <label class="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="hidden"
+                                      name="requires_approval"
+                                      value="false"
+                                    />
+                                    <input
+                                      type="checkbox"
+                                      name="requires_approval"
+                                      value="true"
+                                      checked={@editing_mcp_server["requires_approval"]}
+                                      class="rounded border-gray-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900 bg-gray-700"
+                                    />
+                                    <span class="text-sm text-gray-300">
+                                      Require Approval for All Tools
+                                    </span>
+                                  </label>
+                                </div>
+
+                                <div>
+                                  <label class="block text-xs font-medium text-gray-300 mb-1">
+                                    Dangerous Tools
+                                  </label>
+                                  <input
+                                    type="text"
+                                    name="dangerous_tools"
+                                    value={@editing_mcp_server["dangerous_tools"]}
+                                    placeholder="write_file, delete_file, move_file"
+                                    class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
+                                    id="mcp-server-dangerous-tools"
+                                  />
+                                  <p class="text-xs text-gray-500 mt-1">
+                                    Comma-separated tool names that require user approval
+                                  </p>
+                                </div>
+
+                                <div class="flex items-center justify-between pt-2 border-t border-slate-700">
+                                  <%!-- Delete button (only for existing servers) --%>
+                                  <%= if Enum.any?(@mcp_server_configs, fn s -> to_string(s.name) == @editing_mcp_server["name"] end) do %>
+                                    <button
+                                      type="button"
+                                      phx-click="delete_mcp_server"
+                                      phx-value-name={@editing_mcp_server["name"]}
+                                      data-confirm="Delete this MCP server? This will stop the server and remove its configuration."
+                                      class="px-3 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded-lg transition-colors"
+                                      id="delete-mcp-server"
+                                    >
+                                      Delete Server
+                                    </button>
+                                  <% else %>
+                                    <div></div>
+                                  <% end %>
+                                  <div class="flex gap-2">
+                                    <button
+                                      type="button"
+                                      phx-click="cancel_edit_mcp_server"
+                                      class="px-4 py-2 text-sm text-gray-400 hover:text-white rounded-lg border border-slate-600 hover:border-slate-500 transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="submit"
+                                      class="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                                      id="save-mcp-server"
+                                    >
+                                      Save Server
+                                    </button>
+                                  </div>
+                                </div>
+                              </.form>
+                            </div>
+                          <% else %>
+                            <%!-- Server List --%>
+                            <div>
+                              <div class="flex items-center justify-between mb-3">
+                                <label class="text-sm font-medium text-gray-200">
+                                  Servers
+                                  <span class="ml-2 px-2 py-0.5 text-xs bg-slate-700 text-gray-300 rounded-full">
+                                    {length(@mcp_server_configs)}
+                                  </span>
+                                </label>
+                                <button
+                                  type="button"
+                                  phx-click="add_mcp_server"
+                                  class="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-1.5"
+                                  id="add-mcp-server-btn"
+                                >
+                                  <.icon name="hero-plus" class="w-3.5 h-3.5" /> Add Server
+                                </button>
+                              </div>
+
+                              <%= if @mcp_server_configs == [] do %>
+                                <div class="text-center py-8 bg-slate-900/50 rounded-lg border border-dashed border-slate-600">
+                                  <.icon
+                                    name="hero-server-stack"
+                                    class="w-10 h-10 text-gray-600 mx-auto mb-2"
+                                  />
+                                  <p class="text-gray-400 text-sm">No MCP servers configured</p>
+                                  <p class="text-gray-500 text-xs mt-1">
+                                    Click "Add Server" to get started
+                                  </p>
+                                </div>
+                              <% else %>
+                                <div class="space-y-2">
+                                  <%= for config <- @mcp_server_configs do %>
+                                    <div
+                                      class={[
+                                        "px-4 py-3 rounded-lg border transition-colors",
+                                        if(config.enabled,
+                                          do: "bg-slate-900 border-slate-700",
+                                          else: "bg-slate-900/50 border-slate-700/50 opacity-60"
+                                        )
+                                      ]}
+                                      id={"mcp-server-#{config.name}"}
+                                    >
+                                      <div class="flex items-start justify-between gap-3">
+                                        <div class="flex items-start gap-3 flex-1 min-w-0">
+                                          <%!-- Status indicator --%>
+                                          <div class="mt-1">
+                                            <%= cond do %>
+                                              <% Map.get(@mcp_server_status, config.name, %{})[:status] == :connected -> %>
+                                                <span class="w-2.5 h-2.5 bg-green-500 rounded-full block">
+                                                </span>
+                                              <% Map.get(@mcp_server_status, config.name, %{})[:status] == :restarting -> %>
+                                                <span class="w-2.5 h-2.5 bg-yellow-500 rounded-full block animate-pulse">
+                                                </span>
+                                              <% config.enabled -> %>
+                                                <span class="w-2.5 h-2.5 bg-red-500 rounded-full block">
+                                                </span>
+                                              <% true -> %>
+                                                <span class="w-2.5 h-2.5 bg-gray-600 rounded-full block">
+                                                </span>
+                                            <% end %>
+                                          </div>
+                                          <div class="flex-1 min-w-0">
+                                            <div class="flex items-center gap-2">
+                                              <span class="text-sm font-medium text-white truncate">
+                                                {config.display_name}
+                                              </span>
+                                              <%= unless config.enabled do %>
+                                                <span class="px-1.5 py-0.5 text-xs bg-slate-700 text-gray-400 rounded">
+                                                  Disabled
+                                                </span>
+                                              <% end %>
+                                            </div>
+                                            <div class="text-xs text-gray-500 mt-0.5 truncate">
+                                              {Map.get(config, :description, "")}
+                                            </div>
+                                            <div class="text-xs text-gray-600 mt-1 font-mono truncate">
+                                              {config.command} {Enum.join(
+                                                Map.get(config, :args, []),
+                                                " "
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div class="flex items-center gap-1 flex-shrink-0">
+                                          <%!-- Toggle enabled --%>
+                                          <button
+                                            type="button"
+                                            phx-click="toggle_mcp_server_enabled"
+                                            phx-value-name={to_string(config.name)}
+                                            class={[
+                                              "p-1.5 rounded-lg transition-colors",
+                                              if(config.enabled,
+                                                do: "text-green-400 hover:bg-green-900/30",
+                                                else: "text-gray-500 hover:bg-slate-700"
+                                              )
+                                            ]}
+                                            title={
+                                              if config.enabled,
+                                                do: "Disable server",
+                                                else: "Enable server"
+                                            }
+                                            id={"toggle-mcp-#{config.name}"}
+                                          >
+                                            <.icon
+                                              name={
+                                                if config.enabled,
+                                                  do: "hero-signal",
+                                                  else: "hero-signal-slash"
+                                              }
+                                              class="w-4 h-4"
+                                            />
+                                          </button>
+                                          <%!-- Edit button --%>
+                                          <button
+                                            type="button"
+                                            phx-click="edit_mcp_server"
+                                            phx-value-name={to_string(config.name)}
+                                            class="p-1.5 text-gray-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+                                            title="Edit server"
+                                            id={"edit-mcp-#{config.name}"}
+                                          >
+                                            <.icon name="hero-pencil-square" class="w-4 h-4" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  <% end %>
+                                </div>
+                              <% end %>
+                            </div>
+
+                            <%!-- Available Tools --%>
+                            <div>
+                              <label class="text-sm font-medium text-gray-200 mb-3 block">
+                                Available Tools
+                                <span class="ml-2 px-2 py-0.5 text-xs bg-purple-600/50 text-purple-300 rounded-full">
+                                  {map_size(@mcp_tools)}
+                                </span>
+                              </label>
+                              <%= if map_size(@mcp_tools) == 0 do %>
+                                <p class="text-sm text-gray-500 py-4 text-center">
+                                  No tools discovered yet. Servers may still be connecting.
+                                </p>
+                              <% else %>
+                                <div class="space-y-2 max-h-64 overflow-y-auto">
+                                  <div
+                                    :for={{name, info} <- @mcp_tools}
+                                    class="px-4 py-3 bg-slate-900 rounded-lg border border-slate-700"
+                                  >
+                                    <div class="flex items-start justify-between gap-2">
+                                      <div class="flex-1 min-w-0">
+                                        <div class="font-medium text-blue-300 text-sm">{name}</div>
+                                        <div class="text-gray-400 text-xs mt-0.5 leading-relaxed">
+                                          {info.description}
+                                        </div>
+                                      </div>
+                                      <%= if info.requires_approval do %>
+                                        <span class="flex-shrink-0 px-1.5 py-0.5 text-xs bg-yellow-900/50 text-yellow-300 rounded whitespace-nowrap">
+                                          Approval
+                                        </span>
+                                      <% end %>
+                                    </div>
+                                    <div class="mt-1.5 text-gray-500 text-xs">
+                                      Server: <span class="text-gray-400">{info.server}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              <% end %>
+                            </div>
+                          <% end %>
                         <% end %>
                       </div>
                     <% end %>
@@ -2907,6 +3364,13 @@ defmodule OllamaChatWeb.ChatLive do
 
   defp generation_params_customized?(params) do
     params != default_generation_params()
+  end
+
+  defp fetch_mcp_tools do
+    case MCPClient.list_tools() do
+      {:ok, tools} -> tools
+      {:error, _} -> %{}
+    end
   end
 
   # MCP Tool Handling Functions

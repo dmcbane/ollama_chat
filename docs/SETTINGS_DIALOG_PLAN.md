@@ -1,6 +1,6 @@
 # Settings Dialog & MCP Server Configuration Plan
 
-> **Status:** Phase 1 ✅ Complete | Phase 2 ✅ Complete | Phase 3 🔲 Next | Phase 4 🔲 Future
+> **Status:** Phase 1 ✅ Complete | Phase 2 ✅ Complete | Phase 3 ✅ Complete | Phase 4 🔲 Future
 
 ## Overview
 
@@ -182,56 +182,66 @@ Additional changes:
 
 ---
 
-## Phase 3: MCP Server Configuration UI
+## Phase 3: MCP Server Configuration UI ✅
 
 **Goal:** Build the interactive MCP server management interface in the Settings dialog.
+**Completed:** See commit history.
 
-### 3.1 — MCP Servers Tab Layout
+### 3.1 — MCP Servers Tab Layout ✅
 
-**A. Server List:**
-- Card per server: name, description, status indicator (●), tool count, enabled toggle
-- Click card to select/expand details
-- "Add Server" button at bottom
+Two-mode UI in the MCP Servers tab:
 
-**B. Server Detail / Edit Form:**
-- Fields: Display Name, Description, Command, Args (one per line), Environment Variables (key=value)
-- Checkboxes: Enabled, Requires Approval
-- Dangerous Tools: tag input from discovered tools
-- "Save" and "Delete" buttons with validation errors inline
+**List mode** (when `@editing_mcp_server` is nil):
+- Server cards with status indicator (●), display name, description, command preview
+- Enable/disable toggle button per server (hero-signal / hero-signal-slash icons)
+- Edit button per server (hero-pencil-square icon)
+- "Add Server" button at top
+- Available Tools section below with tool name, description, server, approval badge
 
-**C. Tools Panel:**
-- Expandable list of tools for the selected server
-- Tool name, description, input schema summary
-- "Requires approval" badge
+**Edit mode** (when `@editing_mcp_server` is set):
+- Form fields: Server Name, Display Name, Description, Command, Args (one per line textarea)
+- Checkboxes: Enabled, Require Approval for All Tools (with hidden inputs for false values)
+- Dangerous Tools: comma-separated text input
+- Save, Cancel, and Delete buttons (Delete only shown for existing servers, with confirmation)
+- Inline error banner for validation failures
 
-### 3.2 — Event Handlers
+### 3.2 — Event Handlers ✅
 
-- `"add_mcp_server"` — opens blank form
-- `"edit_mcp_server"` / `"select_mcp_server"` — opens form with existing data
-- `"save_mcp_server"` — validates, calls `MCPConfig.save/1` + `MCPClient.add_server/1` or `update_server/2`
-- `"delete_mcp_server"` — confirmation, calls `MCPConfig.save/1` + `MCPClient.remove_server/1`
-- `"toggle_mcp_server"` — calls `MCPClient.toggle_server/2` + persists
-- `"test_mcp_server"` — attempts to connect and list tools (nice-to-have)
+- `"add_mcp_server"` — initializes empty form data, sets `@editing_mcp_server`
+- `"edit_mcp_server"` — loads existing server config into form data
+- `"cancel_edit_mcp_server"` — clears editing state
+- `"save_mcp_server"` — parses form (args by newline, dangerous_tools by comma), checks MCPClient state to determine add vs update, calls `MCPClient.add_server/1` or `MCPClient.update_server/2`
+- `"delete_mcp_server"` — calls `MCPClient.remove_server/1` with confirmation dialog
+- `"toggle_mcp_server_enabled"` — calls `MCPClient.toggle_server/2`, refreshes configs/status/tools
 
-### 3.3 — New Assigns
+### 3.3 — New Assigns ✅
 
-- `@editing_mcp_server` — `nil` or server config map being edited
-- `@mcp_server_form` — form data for the server editor
-- `@selected_mcp_server` — atom name of selected server for detail view
-- `@mcp_server_configs` — list of all configs (from MCPConfig + MCPClient)
+- `@mcp_server_configs` — list of all server configs (loaded from MCPClient on settings open)
+- `@editing_mcp_server` — `nil` or string-keyed map of form data being edited
+- `@mcp_form_error` — `nil` or error string to display in error banner
 
-### 3.4 — Tests
+### 3.4 — Tests ✅
 
-- LiveView tests: add/edit/delete server through UI
-- LiveView test: toggle server enabled/disabled
-- LiveView test: validation errors display
+- 11 new LiveView tests covering: MCP disabled state, add/cancel/save/delete/toggle/edit flows, validation errors, args/dangerous_tools parsing, update existing server
+- **Total:** 280 tests pass, 0 failures, 0 compile warnings, 0 Credo issues
+
+### 3.5 — Bug Fixes During Implementation
+
+- Fixed `String.to_existing_atom` → `String.to_atom` in edit/delete/toggle handlers (prevents crash on unknown server names)
+- Fixed `runtime.exs` overriding `mcp_config_path` with `nil` when `MCP_CONFIG_PATH` env var not set (broke test config isolation)
+- Fixed `MCPConfig.config_path/0` to use `||` instead of `Application.get_env/3` default (handles explicit `nil` values)
+- Fixed `save_mcp_server` to check `MCPClient.list_server_configs()` instead of local assigns for add-vs-update determination (assigns may be stale when MCP is disabled)
+- Added `mcp_config_path` to `config/test.exs` pointing to temp directory
 
 ### Files Changed (Phase 3)
 
 | File | Changes |
 |---|---|
-| `lib/ollama_chat_web/live/chat_live.ex` | MCP server management UI + event handlers |
-| `test/ollama_chat_web/live/chat_live_test.exs` | MCP server UI tests |
+| `lib/ollama_chat_web/live/chat_live.ex` | New assigns, 6 event handlers, `fetch_mcp_tools/0` helper, full MCP tab UI replacement |
+| `lib/ollama_chat/mcp_config.ex` | Fixed `config_path/0` nil handling |
+| `config/runtime.exs` | Fixed `mcp_config_path` nil override |
+| `config/test.exs` | Added `mcp_config_path` for test isolation |
+| `test/ollama_chat_web/live/chat_live_test.exs` | 11 new MCP server management tests |
 
 ---
 
@@ -285,7 +295,7 @@ Additional changes:
 |---|---|---|---|
 | Phase 1 | Settings dialog + move existing settings | 3–4 hours | ✅ Done |
 | Phase 2 | MCP Config backend + MCPClient dynamic API | 2–3 hours | ✅ Done |
-| Phase 3 | MCP Server configuration UI | 3–4 hours | 🔲 Next |
+| Phase 3 | MCP Server configuration UI | 3–4 hours | ✅ Done |
 | Phase 4 | Polish, accessibility, edge cases | 2–3 hours | 🔲 Future |
 
 ## Execution Order
