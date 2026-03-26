@@ -442,9 +442,16 @@ defmodule OllamaChatWeb.ChatLiveTest do
   end
 
   describe "system prompt" do
-    test "displays system prompt toggle button", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/")
+    test "displays system prompt in settings dialog", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
 
+      # Settings button should be visible in sidebar
+      assert has_element?(view, "#open-settings-btn")
+
+      # Open settings dialog — General tab shows System Prompt
+      view |> element("#open-settings-btn") |> render_click()
+
+      html = render(view)
       assert html =~ "System Prompt"
     end
 
@@ -454,16 +461,15 @@ defmodule OllamaChatWeb.ChatLiveTest do
       refute html =~ "Enter a system prompt"
     end
 
-    test "toggling opens the system prompt panel", %{conn: conn} do
+    test "opening settings shows system prompt form", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
-      view
-      |> element("button[phx-click='toggle_system_prompt']")
-      |> render_click()
+      # Open settings dialog
+      view |> element("#open-settings-btn") |> render_click()
 
       html = render(view)
       assert html =~ "system prompt"
-      assert has_element?(view, "#system-prompt-form")
+      assert has_element?(view, "#settings-system-prompt-form")
     end
 
     test "shows Active badge when system prompt is set", %{conn: conn} do
@@ -471,6 +477,12 @@ defmodule OllamaChatWeb.ChatLiveTest do
 
       render_hook(view, "update_system_prompt", %{"system_prompt" => "Be helpful"})
 
+      # Prompt badge visible on settings button in sidebar
+      html = render(view)
+      assert html =~ "Prompt"
+
+      # Active badge visible inside settings dialog
+      view |> element("#open-settings-btn") |> render_click()
       html = render(view)
       assert html =~ "Active"
     end
@@ -495,10 +507,8 @@ defmodule OllamaChatWeb.ChatLiveTest do
 
       render_hook(view, "conversation_loaded", %{"conversation" => conversation})
 
-      # Open the system prompt panel to verify
-      view
-      |> element("button[phx-click='toggle_system_prompt']")
-      |> render_click()
+      # Open settings dialog to verify system prompt
+      view |> element("#open-settings-btn") |> render_click()
 
       html = render(view)
       assert html =~ "You are a pirate"
@@ -522,10 +532,16 @@ defmodule OllamaChatWeb.ChatLiveTest do
   end
 
   describe "generation parameters" do
-    test "displays generation parameters toggle button", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/")
+    test "displays generation parameters in settings dialog", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
 
-      assert html =~ "Generation Parameters"
+      # Open settings and switch to Generation tab
+      view |> element("#open-settings-btn") |> render_click()
+      view |> element("#settings-tab-generation") |> render_click()
+
+      html = render(view)
+      assert html =~ "Temperature"
+      assert html =~ "Max Tokens"
     end
 
     test "generation params panel is closed by default", %{conn: conn} do
@@ -534,15 +550,15 @@ defmodule OllamaChatWeb.ChatLiveTest do
       refute html =~ "generation-params-panel"
     end
 
-    test "toggling opens the generation params panel", %{conn: conn} do
+    test "generation tab shows parameter form", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
-      view
-      |> element("#toggle-generation-params")
-      |> render_click()
+      # Open settings and switch to Generation tab
+      view |> element("#open-settings-btn") |> render_click()
+      view |> element("#settings-tab-generation") |> render_click()
 
-      assert has_element?(view, "#generation-params-panel")
-      assert has_element?(view, "#generation-params-form")
+      assert has_element?(view, "#settings-generation-tab")
+      assert has_element?(view, "#settings-generation-params-form")
     end
 
     test "shows Custom badge when params differ from defaults", %{conn: conn} do
@@ -563,10 +579,9 @@ defmodule OllamaChatWeb.ChatLiveTest do
     test "updating params changes displayed values", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
-      # Open the panel
-      view
-      |> element("#toggle-generation-params")
-      |> render_click()
+      # Open settings and switch to Generation tab
+      view |> element("#open-settings-btn") |> render_click()
+      view |> element("#settings-tab-generation") |> render_click()
 
       # Update temperature
       render_hook(view, "update_generation_params", %{"temperature" => "1.2"})
@@ -792,6 +807,90 @@ defmodule OllamaChatWeb.ChatLiveTest do
       {:ok, _view, html} = live(conn, "/")
 
       assert html =~ "Healthy"
+    end
+  end
+
+  describe "settings dialog" do
+    test "settings button is visible in sidebar", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      assert has_element?(view, "#open-settings-btn")
+      html = render(view)
+      assert html =~ "Settings"
+    end
+
+    test "settings dialog is closed by default", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      refute has_element?(view, "#settings-dialog")
+    end
+
+    test "clicking settings button opens the dialog", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view |> element("#open-settings-btn") |> render_click()
+
+      assert has_element?(view, "#settings-dialog")
+      assert has_element?(view, "#settings-overlay")
+    end
+
+    test "close button closes the dialog", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view |> element("#open-settings-btn") |> render_click()
+      assert has_element?(view, "#settings-dialog")
+
+      view |> element("#close-settings-btn") |> render_click()
+      refute has_element?(view, "#settings-dialog")
+    end
+
+    test "general tab is shown by default", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view |> element("#open-settings-btn") |> render_click()
+
+      assert has_element?(view, "#settings-general-tab")
+      refute has_element?(view, "#settings-generation-tab")
+    end
+
+    test "switching to generation tab", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view |> element("#open-settings-btn") |> render_click()
+      view |> element("#settings-tab-generation") |> render_click()
+
+      assert has_element?(view, "#settings-generation-tab")
+      refute has_element?(view, "#settings-general-tab")
+    end
+
+    test "switching to mcp tab", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view |> element("#open-settings-btn") |> render_click()
+      view |> element("#settings-tab-mcp") |> render_click()
+
+      assert has_element?(view, "#settings-mcp-tab")
+      refute has_element?(view, "#settings-general-tab")
+    end
+
+    test "settings button shows Prompt badge when system prompt is set", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      refute render(view) =~ "Prompt"
+
+      render_hook(view, "update_system_prompt", %{"system_prompt" => "Be a pirate"})
+
+      assert render(view) =~ "Prompt"
+    end
+
+    test "settings button shows Custom badge when generation params differ", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      refute render(view) =~ "Custom"
+
+      render_hook(view, "update_generation_params", %{"temperature" => "1.5"})
+
+      assert render(view) =~ "Custom"
     end
   end
 

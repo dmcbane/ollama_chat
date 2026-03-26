@@ -65,6 +65,8 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:show_mcp_settings, false)
       |> assign(:show_storage_settings, false)
       |> assign(:save_intermediate_events, false)
+      |> assign(:show_settings, false)
+      |> assign(:settings_tab, :general)
       |> assign(:health_check_enabled, OllamaClient.health_check_enabled?())
       |> assign(:health_check_healthy, true)
       |> assign(:health_check_timer, nil)
@@ -651,6 +653,31 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_event("toggle_storage_settings", _params, socket) do
     {:noreply, assign(socket, :show_storage_settings, !socket.assigns.show_storage_settings)}
+  end
+
+  @impl true
+  def handle_event("open_settings", _params, socket) do
+    # Refresh MCP status when opening settings
+    socket =
+      if socket.assigns.mcp_enabled? do
+        server_status = MCPClient.server_info()
+        assign(socket, :mcp_server_status, server_status)
+      else
+        socket
+      end
+
+    {:noreply, assign(socket, :show_settings, true)}
+  end
+
+  @impl true
+  def handle_event("close_settings", _params, socket) do
+    {:noreply, assign(socket, :show_settings, false)}
+  end
+
+  @impl true
+  def handle_event("switch_settings_tab", %{"tab" => tab}, socket) do
+    tab_atom = String.to_existing_atom(tab)
+    {:noreply, assign(socket, :settings_tab, tab_atom)}
   end
 
   @impl true
@@ -1372,314 +1399,38 @@ defmodule OllamaChatWeb.ChatLive do
             </button>
           </div>
 
-          <%!-- System prompt panel --%>
+          <%!-- Settings button --%>
           <div class="mb-4">
             <button
               type="button"
-              phx-click="toggle_system_prompt"
-              class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
+              phx-click="open_settings"
+              id="open-settings-btn"
+              class="w-full px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-3"
             >
-              <.icon
-                name={if @system_prompt_open, do: "hero-chevron-down", else: "hero-chevron-right"}
-                class="w-4 h-4"
-              />
-              <span>System Prompt</span>
-              <%= if @system_prompt != "" do %>
-                <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">Active</span>
-              <% end %>
+              <.icon name="hero-cog-6-tooth" class="w-5 h-5 text-gray-400" />
+              <span class="text-sm font-medium">Settings</span>
+              <div class="flex items-center gap-1.5 ml-auto">
+                <%= if @system_prompt != "" do %>
+                  <span class="px-1.5 py-0.5 text-xs bg-blue-600 text-white rounded-full">
+                    Prompt
+                  </span>
+                <% end %>
+                <%= if generation_params_customized?(@generation_params) do %>
+                  <span class="px-1.5 py-0.5 text-xs bg-amber-600 text-white rounded-full">
+                    Custom
+                  </span>
+                <% end %>
+                <%= if @mcp_enabled? and map_size(@mcp_tools) > 0 do %>
+                  <span class="px-1.5 py-0.5 text-xs bg-purple-600 text-white rounded-full">
+                    MCP {map_size(@mcp_tools)}
+                  </span>
+                <% end %>
+              </div>
             </button>
-            <%= if @system_prompt_open do %>
-              <div class="mt-2">
-                <.form
-                  for={to_form(%{"system_prompt" => @system_prompt})}
-                  id="system-prompt-form"
-                  phx-change="update_system_prompt"
-                >
-                  <textarea
-                    name="system_prompt"
-                    placeholder="Enter a system prompt to set the model's behavior (e.g., 'You are a helpful coding assistant')..."
-                    rows="3"
-                    class="w-full bg-slate-800 text-white border border-slate-700 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y placeholder-slate-500"
-                    phx-debounce="500"
-                  >{@system_prompt}</textarea>
-                </.form>
-              </div>
-            <% end %>
           </div>
 
-          <%!-- Storage Settings --%>
-          <div id="storage-settings" class="mb-4" phx-hook=".StorageSettings">
-            <div class="mb-2">
-              <button
-                type="button"
-                phx-click="toggle_storage_settings"
-                class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
-              >
-                <.icon
-                  name={
-                    if @show_storage_settings, do: "hero-chevron-down", else: "hero-chevron-right"
-                  }
-                  class="w-4 h-4"
-                />
-                <.icon name="hero-circle-stack" class="w-4 h-4" />
-                <span>Storage Settings</span>
-              </button>
-            </div>
-            <%= if @show_storage_settings do %>
-              <div class="ml-8 space-y-2">
-                <label class="flex items-start gap-2 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    phx-click="toggle_save_intermediate_events"
-                    checked={@save_intermediate_events}
-                    class="mt-0.5 rounded border-gray-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900 bg-gray-700"
-                  />
-                  <div>
-                    <div class="text-gray-300">Save tool activity in history</div>
-                    <div class="text-xs text-gray-500 mt-0.5">
-                      Stores tool calls and responses in localStorage. Disable to save storage space.
-                    </div>
-                  </div>
-                </label>
-              </div>
-            <% end %>
-          </div>
-
-          <%!-- MCP Tools panel --%>
-          <%= if @mcp_enabled? do %>
-            <div class="mb-4">
-              <button
-                type="button"
-                phx-click="toggle_mcp_settings"
-                class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
-              >
-                <.icon
-                  name={if @show_mcp_settings, do: "hero-chevron-down", else: "hero-chevron-right"}
-                  class="w-4 h-4"
-                />
-                <.icon name="hero-wrench-screwdriver" class="w-4 h-4" />
-                <span>MCP Tools</span>
-                <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">
-                  {map_size(@mcp_tools)}
-                </span>
-              </button>
-              <%= if @show_mcp_settings do %>
-                <div class="mt-2 space-y-3 max-h-96 overflow-y-auto">
-                  <%!-- Server Status Section --%>
-                  <%= if map_size(@mcp_server_status) > 0 do %>
-                    <div class="px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700">
-                      <div class="text-xs font-medium text-gray-300 mb-2">Server Status</div>
-                      <div class="space-y-1">
-                        <%= for {name, info} <- @mcp_server_status do %>
-                          <div class="flex items-center justify-between text-xs">
-                            <span class="text-gray-400">{info.display_name}</span>
-                            <%= cond do %>
-                              <% info.status == :connected -> %>
-                                <div class="flex items-center gap-1">
-                                  <span class="w-2 h-2 bg-green-500 rounded-full"></span>
-                                  <span class="text-green-400">Connected</span>
-                                  <%= if info.restart_count && info.restart_count > 0 do %>
-                                    <span class="text-yellow-400 text-xs ml-1">
-                                      (restarted {info.restart_count}x)
-                                    </span>
-                                  <% end %>
-                                </div>
-                              <% info.status == :restarting -> %>
-                                <div class="flex items-center gap-1">
-                                  <span class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse">
-                                  </span>
-                                  <span class="text-yellow-400">Restarting...</span>
-                                </div>
-                              <% true -> %>
-                                <div class="flex items-center gap-1">
-                                  <span class="w-2 h-2 bg-red-500 rounded-full"></span>
-                                  <span class="text-red-400">Disconnected</span>
-                                </div>
-                            <% end %>
-                          </div>
-                        <% end %>
-                      </div>
-                    </div>
-                  <% end %>
-                  <%!-- Tools Section --%>
-                  <%= if map_size(@mcp_tools) == 0 do %>
-                    <p class="text-sm text-gray-400 px-3 py-2">No MCP tools available</p>
-                  <% else %>
-                    <div class="px-3 py-1 text-xs font-medium text-gray-300">
-                      Available Tools ({map_size(@mcp_tools)})
-                    </div>
-                    <div
-                      :for={{name, info} <- @mcp_tools}
-                      class="text-xs p-3 bg-slate-800 rounded-lg border border-slate-700"
-                    >
-                      <div class="flex items-start justify-between gap-2">
-                        <div class="flex-1">
-                          <div class="font-medium text-blue-300 mb-1">{name}</div>
-                          <div class="text-gray-400 text-xs leading-relaxed">{info.description}</div>
-                        </div>
-                        <%= if info.requires_approval do %>
-                          <span class="px-1.5 py-0.5 text-xs bg-yellow-900/50 text-yellow-300 rounded whitespace-nowrap">
-                            Requires approval
-                          </span>
-                        <% end %>
-                      </div>
-                      <div class="mt-2 text-gray-500 text-xs">
-                        Server: <span class="text-gray-400">{info.server}</span>
-                      </div>
-                    </div>
-                  <% end %>
-                </div>
-              <% end %>
-            </div>
-          <% end %>
-
-          <%!-- Generation parameters panel --%>
-          <div class="mb-4">
-            <button
-              type="button"
-              phx-click="toggle_generation_params"
-              class="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors"
-              id="toggle-generation-params"
-            >
-              <.icon
-                name={if @generation_params_open, do: "hero-chevron-down", else: "hero-chevron-right"}
-                class="w-4 h-4"
-              />
-              <span>Generation Parameters</span>
-              <%= if generation_params_customized?(@generation_params) do %>
-                <span class="px-2 py-0.5 text-xs bg-amber-600 text-white rounded-full">Custom</span>
-              <% end %>
-            </button>
-            <%= if @generation_params_open do %>
-              <div
-                class="mt-2 bg-slate-800/50 border border-slate-700 rounded-lg p-4"
-                id="generation-params-panel"
-              >
-                <.form
-                  for={to_form(@generation_params)}
-                  id="generation-params-form"
-                  phx-change="update_generation_params"
-                >
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <%!-- Temperature --%>
-                    <div>
-                      <label class="text-sm text-gray-300 flex justify-between mb-1">
-                        <span>Temperature</span>
-                        <span class="text-blue-400 font-mono">
-                          {@generation_params["temperature"]}
-                        </span>
-                      </label>
-                      <input
-                        type="range"
-                        name="temperature"
-                        min="0"
-                        max="2"
-                        step="0.1"
-                        value={@generation_params["temperature"]}
-                        class="w-full accent-blue-500"
-                      />
-                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                        <span>Precise</span>
-                        <span>Creative</span>
-                      </div>
-                    </div>
-                    <%!-- Max Tokens (num_predict) --%>
-                    <div>
-                      <label class="text-sm text-gray-300 flex justify-between mb-1">
-                        <span>Max Tokens</span>
-                        <span class="text-blue-400 font-mono">
-                          {@generation_params["num_predict"]}
-                        </span>
-                      </label>
-                      <input
-                        type="range"
-                        name="num_predict"
-                        min="64"
-                        max="8192"
-                        step="64"
-                        value={@generation_params["num_predict"]}
-                        class="w-full accent-blue-500"
-                      />
-                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                        <span>64</span>
-                        <span>8192</span>
-                      </div>
-                    </div>
-                    <%!-- Top P --%>
-                    <div>
-                      <label class="text-sm text-gray-300 flex justify-between mb-1">
-                        <span>Top P</span>
-                        <span class="text-blue-400 font-mono">{@generation_params["top_p"]}</span>
-                      </label>
-                      <input
-                        type="range"
-                        name="top_p"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        value={@generation_params["top_p"]}
-                        class="w-full accent-blue-500"
-                      />
-                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                        <span>Focused</span>
-                        <span>Diverse</span>
-                      </div>
-                    </div>
-                    <%!-- Top K --%>
-                    <div>
-                      <label class="text-sm text-gray-300 flex justify-between mb-1">
-                        <span>Top K</span>
-                        <span class="text-blue-400 font-mono">{@generation_params["top_k"]}</span>
-                      </label>
-                      <input
-                        type="range"
-                        name="top_k"
-                        min="1"
-                        max="100"
-                        step="1"
-                        value={@generation_params["top_k"]}
-                        class="w-full accent-blue-500"
-                      />
-                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                        <span>1</span>
-                        <span>100</span>
-                      </div>
-                    </div>
-                    <%!-- Context Window (num_ctx) --%>
-                    <div class="md:col-span-2">
-                      <label class="text-sm text-gray-300 flex justify-between mb-1">
-                        <span>Context Window</span>
-                        <span class="text-blue-400 font-mono">{@generation_params["num_ctx"]}</span>
-                      </label>
-                      <input
-                        type="range"
-                        name="num_ctx"
-                        min="512"
-                        max="131072"
-                        step="512"
-                        value={@generation_params["num_ctx"]}
-                        class="w-full accent-blue-500"
-                      />
-                      <div class="flex justify-between text-xs text-slate-500 mt-0.5">
-                        <span>512</span>
-                        <span>131072</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="mt-3 flex justify-end">
-                    <button
-                      type="button"
-                      phx-click="reset_generation_params"
-                      class="text-sm text-gray-400 hover:text-white transition-colors px-3 py-1 rounded border border-slate-600 hover:border-slate-500"
-                      id="reset-generation-params"
-                    >
-                      Reset to Defaults
-                    </button>
-                  </div>
-                </.form>
-              </div>
-            <% end %>
-          </div>
+          <%!-- Hidden hook for loading storage preferences at mount --%>
+          <div id="storage-settings" class="hidden" phx-hook=".StorageSettings"></div>
 
           <%!-- Footer info (sidebar) --%>
           <div class="text-center text-sm text-slate-400 mt-6 hidden xl:block">
@@ -1991,6 +1742,401 @@ defmodule OllamaChatWeb.ChatLive do
                     >
                       Deny
                     </button>
+                  </div>
+                </div>
+              </div>
+            <% end %>
+
+            <%!-- Settings Dialog --%>
+            <%= if @show_settings do %>
+              <div
+                class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+                phx-click="close_settings"
+                phx-window-keydown="close_settings"
+                phx-key="Escape"
+                id="settings-overlay"
+              >
+                <div
+                  class="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col"
+                  phx-click-stop
+                  id="settings-dialog"
+                >
+                  <%!-- Dialog Header --%>
+                  <div class="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+                    <h2 class="text-xl font-bold text-white">Settings</h2>
+                    <button
+                      type="button"
+                      phx-click="close_settings"
+                      class="p-1 text-gray-400 hover:text-white transition-colors rounded-lg hover:bg-slate-700"
+                      id="close-settings-btn"
+                    >
+                      <.icon name="hero-x-mark" class="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <%!-- Tab Navigation --%>
+                  <div class="flex border-b border-slate-700 px-6">
+                    <button
+                      type="button"
+                      phx-click="switch_settings_tab"
+                      phx-value-tab="general"
+                      id="settings-tab-general"
+                      class={[
+                        "px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
+                        if(@settings_tab == :general,
+                          do: "border-blue-500 text-blue-400",
+                          else:
+                            "border-transparent text-gray-400 hover:text-gray-200 hover:border-slate-500"
+                        )
+                      ]}
+                    >
+                      General
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="switch_settings_tab"
+                      phx-value-tab="generation"
+                      id="settings-tab-generation"
+                      class={[
+                        "px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
+                        if(@settings_tab == :generation,
+                          do: "border-blue-500 text-blue-400",
+                          else:
+                            "border-transparent text-gray-400 hover:text-gray-200 hover:border-slate-500"
+                        )
+                      ]}
+                    >
+                      Generation
+                      <%= if generation_params_customized?(@generation_params) do %>
+                        <span class="ml-1.5 px-1.5 py-0.5 text-xs bg-amber-600 text-white rounded-full">
+                          Custom
+                        </span>
+                      <% end %>
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="switch_settings_tab"
+                      phx-value-tab="mcp"
+                      id="settings-tab-mcp"
+                      class={[
+                        "px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
+                        if(@settings_tab == :mcp,
+                          do: "border-blue-500 text-blue-400",
+                          else:
+                            "border-transparent text-gray-400 hover:text-gray-200 hover:border-slate-500"
+                        )
+                      ]}
+                    >
+                      MCP Servers
+                      <%= if @mcp_enabled? and map_size(@mcp_tools) > 0 do %>
+                        <span class="ml-1.5 px-1.5 py-0.5 text-xs bg-purple-600 text-white rounded-full">
+                          {map_size(@mcp_tools)}
+                        </span>
+                      <% end %>
+                    </button>
+                  </div>
+
+                  <%!-- Tab Content (scrollable) --%>
+                  <div class="flex-1 overflow-y-auto px-6 py-5">
+                    <%!-- General Tab --%>
+                    <%= if @settings_tab == :general do %>
+                      <div class="space-y-6" id="settings-general-tab">
+                        <%!-- System Prompt Section --%>
+                        <div>
+                          <div class="flex items-center justify-between mb-2">
+                            <label class="text-sm font-medium text-gray-200">System Prompt</label>
+                            <%= if @system_prompt != "" do %>
+                              <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">
+                                Active
+                              </span>
+                            <% end %>
+                          </div>
+                          <.form
+                            for={to_form(%{"system_prompt" => @system_prompt})}
+                            id="settings-system-prompt-form"
+                            phx-change="update_system_prompt"
+                          >
+                            <textarea
+                              name="system_prompt"
+                              placeholder="Enter a system prompt to set the model's behavior (e.g., 'You are a helpful coding assistant')..."
+                              rows="4"
+                              class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y placeholder-slate-500"
+                              phx-debounce="500"
+                            >{@system_prompt}</textarea>
+                          </.form>
+                          <p class="mt-1.5 text-xs text-gray-500">
+                            Sets the model's behavior and personality for all messages in this conversation.
+                          </p>
+                        </div>
+
+                        <%!-- Storage Settings Section --%>
+                        <div id="settings-storage-panel">
+                          <label class="text-sm font-medium text-gray-200 mb-3 block">Storage</label>
+                          <label class="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              phx-click="toggle_save_intermediate_events"
+                              checked={@save_intermediate_events}
+                              class="mt-0.5 rounded border-gray-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900 bg-gray-700"
+                            />
+                            <div>
+                              <div class="text-sm text-gray-300">Save tool activity in history</div>
+                              <div class="text-xs text-gray-500 mt-0.5">
+                                Stores tool calls and responses in localStorage. Disable to save storage space.
+                              </div>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+                    <% end %>
+
+                    <%!-- Generation Tab --%>
+                    <%= if @settings_tab == :generation do %>
+                      <div id="settings-generation-tab">
+                        <.form
+                          for={to_form(@generation_params)}
+                          id="settings-generation-params-form"
+                          phx-change="update_generation_params"
+                        >
+                          <div class="space-y-5">
+                            <%!-- Temperature --%>
+                            <div>
+                              <label class="text-sm text-gray-200 flex justify-between mb-2">
+                                <span class="font-medium">Temperature</span>
+                                <span class="text-blue-400 font-mono text-xs bg-slate-900 px-2 py-0.5 rounded">
+                                  {@generation_params["temperature"]}
+                                </span>
+                              </label>
+                              <input
+                                type="range"
+                                name="temperature"
+                                min="0"
+                                max="2"
+                                step="0.1"
+                                value={@generation_params["temperature"]}
+                                class="w-full accent-blue-500"
+                              />
+                              <div class="flex justify-between text-xs text-slate-500 mt-1">
+                                <span>Precise</span>
+                                <span>Creative</span>
+                              </div>
+                            </div>
+                            <%!-- Max Tokens --%>
+                            <div>
+                              <label class="text-sm text-gray-200 flex justify-between mb-2">
+                                <span class="font-medium">Max Tokens</span>
+                                <span class="text-blue-400 font-mono text-xs bg-slate-900 px-2 py-0.5 rounded">
+                                  {@generation_params["num_predict"]}
+                                </span>
+                              </label>
+                              <input
+                                type="range"
+                                name="num_predict"
+                                min="64"
+                                max="8192"
+                                step="64"
+                                value={@generation_params["num_predict"]}
+                                class="w-full accent-blue-500"
+                              />
+                              <div class="flex justify-between text-xs text-slate-500 mt-1">
+                                <span>64</span>
+                                <span>8192</span>
+                              </div>
+                            </div>
+                            <%!-- Top P --%>
+                            <div>
+                              <label class="text-sm text-gray-200 flex justify-between mb-2">
+                                <span class="font-medium">Top P</span>
+                                <span class="text-blue-400 font-mono text-xs bg-slate-900 px-2 py-0.5 rounded">
+                                  {@generation_params["top_p"]}
+                                </span>
+                              </label>
+                              <input
+                                type="range"
+                                name="top_p"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                value={@generation_params["top_p"]}
+                                class="w-full accent-blue-500"
+                              />
+                              <div class="flex justify-between text-xs text-slate-500 mt-1">
+                                <span>Focused</span>
+                                <span>Diverse</span>
+                              </div>
+                            </div>
+                            <%!-- Top K --%>
+                            <div>
+                              <label class="text-sm text-gray-200 flex justify-between mb-2">
+                                <span class="font-medium">Top K</span>
+                                <span class="text-blue-400 font-mono text-xs bg-slate-900 px-2 py-0.5 rounded">
+                                  {@generation_params["top_k"]}
+                                </span>
+                              </label>
+                              <input
+                                type="range"
+                                name="top_k"
+                                min="1"
+                                max="100"
+                                step="1"
+                                value={@generation_params["top_k"]}
+                                class="w-full accent-blue-500"
+                              />
+                              <div class="flex justify-between text-xs text-slate-500 mt-1">
+                                <span>1</span>
+                                <span>100</span>
+                              </div>
+                            </div>
+                            <%!-- Context Window --%>
+                            <div>
+                              <label class="text-sm text-gray-200 flex justify-between mb-2">
+                                <span class="font-medium">Context Window</span>
+                                <span class="text-blue-400 font-mono text-xs bg-slate-900 px-2 py-0.5 rounded">
+                                  {@generation_params["num_ctx"]}
+                                </span>
+                              </label>
+                              <input
+                                type="range"
+                                name="num_ctx"
+                                min="512"
+                                max="131072"
+                                step="512"
+                                value={@generation_params["num_ctx"]}
+                                class="w-full accent-blue-500"
+                              />
+                              <div class="flex justify-between text-xs text-slate-500 mt-1">
+                                <span>512</span>
+                                <span>131072</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="mt-5 flex justify-end">
+                            <button
+                              type="button"
+                              phx-click="reset_generation_params"
+                              class="text-sm text-gray-400 hover:text-white transition-colors px-4 py-2 rounded-lg border border-slate-600 hover:border-slate-500 hover:bg-slate-700"
+                              id="settings-reset-generation-params"
+                            >
+                              Reset to Defaults
+                            </button>
+                          </div>
+                        </.form>
+                      </div>
+                    <% end %>
+
+                    <%!-- MCP Servers Tab --%>
+                    <%= if @settings_tab == :mcp do %>
+                      <div class="space-y-5" id="settings-mcp-tab">
+                        <%= if not @mcp_enabled? do %>
+                          <div class="text-center py-8">
+                            <.icon
+                              name="hero-wrench-screwdriver"
+                              class="w-12 h-12 text-gray-600 mx-auto mb-3"
+                            />
+                            <p class="text-gray-400 text-sm">MCP is not enabled.</p>
+                            <p class="text-gray-500 text-xs mt-1">
+                              Set
+                              <code class="text-blue-400">
+                                config :ollama_chat, :mcp_enabled, true
+                              </code>
+                              to enable.
+                            </p>
+                          </div>
+                        <% else %>
+                          <%!-- Server Status --%>
+                          <%= if map_size(@mcp_server_status) > 0 do %>
+                            <div>
+                              <label class="text-sm font-medium text-gray-200 mb-3 block">
+                                Server Status
+                              </label>
+                              <div class="space-y-2">
+                                <%= for {name, info} <- @mcp_server_status do %>
+                                  <div class="flex items-center justify-between px-4 py-3 bg-slate-900 rounded-lg border border-slate-700">
+                                    <div class="flex items-center gap-3">
+                                      <%= cond do %>
+                                        <% info.status == :connected -> %>
+                                          <span class="w-2.5 h-2.5 bg-green-500 rounded-full"></span>
+                                        <% info.status == :restarting -> %>
+                                          <span class="w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse">
+                                          </span>
+                                        <% true -> %>
+                                          <span class="w-2.5 h-2.5 bg-red-500 rounded-full"></span>
+                                      <% end %>
+                                      <div>
+                                        <div class="text-sm text-white font-medium">
+                                          {info.display_name}
+                                        </div>
+                                        <div class="text-xs text-gray-500">{name}</div>
+                                      </div>
+                                    </div>
+                                    <div class="text-right">
+                                      <%= cond do %>
+                                        <% info.status == :connected -> %>
+                                          <span class="text-xs text-green-400">Connected</span>
+                                          <%= if info[:restart_count] && info.restart_count > 0 do %>
+                                            <div class="text-xs text-yellow-400">
+                                              restarted {info.restart_count}x
+                                            </div>
+                                          <% end %>
+                                        <% info.status == :restarting -> %>
+                                          <span class="text-xs text-yellow-400">Restarting...</span>
+                                        <% true -> %>
+                                          <span class="text-xs text-red-400">Disconnected</span>
+                                      <% end %>
+                                    </div>
+                                  </div>
+                                <% end %>
+                              </div>
+                            </div>
+                          <% end %>
+
+                          <%!-- Available Tools --%>
+                          <div>
+                            <label class="text-sm font-medium text-gray-200 mb-3 block">
+                              Available Tools
+                              <span class="ml-2 px-2 py-0.5 text-xs bg-purple-600/50 text-purple-300 rounded-full">
+                                {map_size(@mcp_tools)}
+                              </span>
+                            </label>
+                            <%= if map_size(@mcp_tools) == 0 do %>
+                              <p class="text-sm text-gray-500 py-4 text-center">
+                                No tools discovered yet. Servers may still be connecting.
+                              </p>
+                            <% else %>
+                              <div class="space-y-2 max-h-80 overflow-y-auto">
+                                <div
+                                  :for={{name, info} <- @mcp_tools}
+                                  class="px-4 py-3 bg-slate-900 rounded-lg border border-slate-700"
+                                >
+                                  <div class="flex items-start justify-between gap-2">
+                                    <div class="flex-1 min-w-0">
+                                      <div class="font-medium text-blue-300 text-sm">{name}</div>
+                                      <div class="text-gray-400 text-xs mt-0.5 leading-relaxed">
+                                        {info.description}
+                                      </div>
+                                    </div>
+                                    <%= if info.requires_approval do %>
+                                      <span class="flex-shrink-0 px-1.5 py-0.5 text-xs bg-yellow-900/50 text-yellow-300 rounded whitespace-nowrap">
+                                        Approval
+                                      </span>
+                                    <% end %>
+                                  </div>
+                                  <div class="mt-1.5 text-gray-500 text-xs">
+                                    Server: <span class="text-gray-400">{info.server}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            <% end %>
+                          </div>
+
+                          <div class="mt-4 p-3 bg-slate-900/50 rounded-lg border border-dashed border-slate-600">
+                            <p class="text-xs text-gray-500 text-center">
+                              MCP server configuration coming soon. Currently configured in <code class="text-blue-400">config/dev.exs</code>.
+                            </p>
+                          </div>
+                        <% end %>
+                      </div>
+                    <% end %>
                   </div>
                 </div>
               </div>
