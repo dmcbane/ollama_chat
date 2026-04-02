@@ -33,7 +33,8 @@ config :ollama_chat,
   health_check_enabled: System.get_env("OLLAMA_HEALTH_CHECK_ENABLED", "true") == "true",
   health_check_interval:
     String.to_integer(System.get_env("OLLAMA_HEALTH_CHECK_INTERVAL_MS", "30000")),
-  memory_enabled: System.get_env("OLLAMA_MEMORY_ENABLED", "true") == "true"
+  memory_enabled: System.get_env("OLLAMA_MEMORY_ENABLED", "true") == "true",
+  ollama_embedding_model: System.get_env("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 
 # Only override mcp_config_path when the env var is explicitly set,
 # so we don't clobber values from dev.exs or test.exs with nil

@@ -144,6 +144,43 @@ defmodule OllamaChat.OllamaClient do
   end
 
   @doc """
+  Generates a vector embedding for the given text using Ollama's embedding API.
+
+  Returns `{:ok, embedding}` where embedding is a list of floats, or `{:error, reason}`.
+
+  ## Options
+
+  - `:model` — Embedding model to use (default: configured `OLLAMA_EMBEDDING_MODEL` or "nomic-embed-text")
+  """
+  def generate_embedding(text, opts \\ []) do
+    model = opts[:model] || embedding_model()
+    body = %{"model" => model, "input" => text}
+
+    case Req.post(req_client(), url: embed_url(), json: body) do
+      {:ok, %Req.Response{status: 200, body: %{"embeddings" => [embedding | _]}}} ->
+        {:ok, embedding}
+
+      {:ok, %Req.Response{status: 200, body: response}} ->
+        {:error, {:unexpected_response, response}}
+
+      {:ok, %Req.Response{status: status, body: body}} ->
+        Logger.warning("Ollama embed API returned unexpected status=#{status}")
+        {:error, "Ollama API returned status #{status}: #{inspect(body)}"}
+
+      {:error, error} ->
+        Logger.error("Embedding request failed: #{inspect(error)}")
+        {:error, error}
+    end
+  end
+
+  @doc """
+  Returns the configured embedding model name.
+  """
+  def embedding_model do
+    Application.get_env(:ollama_chat, :ollama_embedding_model, "nomic-embed-text")
+  end
+
+  @doc """
   Ensures Ollama is running, starting it if necessary.
   """
   def ensure_ollama_running do
@@ -278,6 +315,10 @@ defmodule OllamaChat.OllamaClient do
 
   defp tags_url do
     "#{base_url()}/api/tags"
+  end
+
+  defp embed_url do
+    "#{base_url()}/api/embed"
   end
 
   defp default_model do

@@ -4,6 +4,9 @@ defmodule OllamaChat.MemoryTest do
   alias OllamaChat.Memory
   alias OllamaChat.Memory.Entry
 
+  @fake_embedding Enum.map(1..768, fn i -> :math.sin(i / 100) end)
+  @fake_embedding_2 Enum.map(1..768, fn i -> :math.cos(i / 100) end)
+
   defp valid_memory_attrs(overrides \\ %{}) do
     Map.merge(
       %{
@@ -1029,6 +1032,251 @@ defmodule OllamaChat.MemoryTest do
 
     test "touch_memories/1 with empty list returns {:ok, {0, nil}}" do
       assert {:ok, {0, nil}} = Memory.touch_memories([])
+    end
+  end
+
+  # ── Phase 2: Full-text search with ts_rank ────────────────────────────────
+
+  describe "full-text search with ts_rank" do
+    test "search_by_text/2 uses ILIKE matching" do
+      {:ok, _} =
+        Memory.create_memory(valid_memory_attrs(%{content: "Elixir is a functional language"}))
+
+      {:ok, _} =
+        Memory.create_memory(valid_memory_attrs(%{content: "Phoenix is a web framework"}))
+
+      {:ok, _} = Memory.create_memory(valid_memory_attrs(%{content: "User loves pizza"}))
+
+      {:ok, results} = Memory.search_by_text("Elixir")
+      assert [entry] = results
+      assert entry.content =~ "Elixir"
+    end
+
+    test "search_by_text/2 with memory_type filter" do
+      {:ok, _} =
+        Memory.create_memory(valid_memory_attrs(%{content: "Elixir fact", memory_type: "fact"}))
+
+      {:ok, _} =
+        Memory.create_memory(
+          valid_memory_attrs(%{content: "Elixir preference", memory_type: "preference"})
+        )
+
+      {:ok, results} = Memory.search_by_text("Elixir", memory_type: "fact")
+      assert [entry] = results
+      assert entry.memory_type == "fact"
+    end
+
+    test "search_by_text/2 returns results with relevance ranking" do
+      {:ok, _} =
+        Memory.create_memory(
+          valid_memory_attrs(%{content: "Elixir Elixir Elixir", importance: 0.3})
+        )
+
+      {:ok, _} =
+        Memory.create_memory(valid_memory_attrs(%{content: "Elixir basics", importance: 0.9}))
+
+      {:ok, results} = Memory.search_by_text("Elixir")
+      assert length(results) == 2
+      # Higher importance should rank first in current implementation
+      assert hd(results).importance == 0.9
+    end
+
+    test "search_by_text/2 filters by category" do
+      {:ok, _} =
+        Memory.create_memory(
+          valid_memory_attrs(%{content: "Elixir OTP patterns", category: "programming"})
+        )
+
+      {:ok, _} =
+        Memory.create_memory(
+          valid_memory_attrs(%{content: "Elixir Phoenix tips", category: "web"})
+        )
+
+      {:ok, results} = Memory.search_by_text("Elixir", category: "programming")
+      assert [entry] = results
+      assert entry.category == "programming"
+    end
+
+    test "search_by_text/2 with min_importance filter" do
+      {:ok, _} =
+        Memory.create_memory(
+          valid_memory_attrs(%{content: "Elixir low importance", importance: 0.1})
+        )
+
+      {:ok, _} =
+        Memory.create_memory(
+          valid_memory_attrs(%{content: "Elixir high importance", importance: 0.8})
+        )
+
+      {:ok, results} = Memory.search_by_text("Elixir", min_importance: 0.5)
+      assert [entry] = results
+      assert entry.importance >= 0.5
+    end
+  end
+
+  # ── Phase 2: Embedding & Full-Text Search ─────────────────────────────────
+
+  describe "create_memory_with_embedding/2" do
+    test "creates a memory entry successfully" do
+      attrs = valid_memory_attrs()
+      fake_fn = fn _text -> {:ok, @fake_embedding} end
+
+      assert {:ok, entry} = Memory.create_memory_with_embedding(attrs, embedding_fn: fake_fn)
+      assert entry.content == attrs.content
+      assert entry.id != nil
+    end
+
+    test "returns error on invalid attrs" do
+      assert {:error, _} =
+               Memory.create_memory_with_embedding(%{content: ""},
+                 embedding_fn: fn _ -> {:ok, @fake_embedding} end
+               )
+    end
+
+    test "returns {:error, :memory_disabled} when disabled" do
+      Application.put_env(:ollama_chat, :memory_enabled, false)
+      on_exit(fn -> Application.put_env(:ollama_chat, :memory_enabled, true) end)
+
+      assert {:error, :memory_disabled} =
+               Memory.create_memory_with_embedding(valid_memory_attrs())
+    end
+  end
+
+  describe "search_by_fulltext/2" do
+    test "finds memories using full-text search" do
+      create_memory!(%{content: "The quick brown fox jumps over the lazy dog"})
+      create_memory!(%{content: "Elixir is a functional programming language"})
+
+      assert {:ok, results} = Memory.search_by_fulltext("quick fox")
+      assert length(results) == 1
+      assert hd(results).content =~ "quick brown fox"
+    end
+
+    test "returns empty list when no matches" do
+      create_memory!(%{content: "Something unrelated"})
+
+      assert {:ok, []} = Memory.search_by_fulltext("nonexistent term xyz")
+    end
+
+    test "ranks results by relevance" do
+      create_memory!(%{content: "Elixir and Phoenix for web development"})
+      create_memory!(%{content: "Elixir is great. Elixir is functional. Elixir rocks."})
+
+      assert {:ok, results} = Memory.search_by_fulltext("Elixir")
+      assert length(results) == 2
+      # The one with more mentions should rank higher
+      assert hd(results).content =~ "Elixir is great"
+    end
+
+    test "respects limit option" do
+      for i <- 1..5, do: create_memory!(%{content: "Memory about Elixir number #{i}"})
+
+      assert {:ok, results} = Memory.search_by_fulltext("Elixir", limit: 2)
+      assert length(results) == 2
+    end
+
+    test "applies filters" do
+      create_memory!(%{content: "Elixir fact about types", memory_type: "fact"})
+
+      create_memory!(%{
+        content: "Elixir preference for pattern matching",
+        memory_type: "preference"
+      })
+
+      assert {:ok, results} = Memory.search_by_fulltext("Elixir", memory_type: "fact")
+      assert length(results) == 1
+      assert hd(results).memory_type == "fact"
+    end
+
+    test "returns {:error, :memory_disabled} when disabled" do
+      Application.put_env(:ollama_chat, :memory_enabled, false)
+      on_exit(fn -> Application.put_env(:ollama_chat, :memory_enabled, true) end)
+
+      assert {:error, :memory_disabled} = Memory.search_by_fulltext("test")
+    end
+  end
+
+  describe "search_by_similarity/2" do
+    test "finds memories ordered by cosine distance" do
+      create_memory!(%{content: "First", embedding: @fake_embedding})
+      create_memory!(%{content: "Second", embedding: @fake_embedding_2})
+
+      assert {:ok, results} = Memory.search_by_similarity(@fake_embedding)
+      assert length(results) == 2
+      # The one with the same embedding should be first (distance = 0)
+      assert hd(results).content == "First"
+    end
+
+    test "only returns entries with embeddings" do
+      create_memory!(%{content: "Has embedding", embedding: @fake_embedding})
+      create_memory!(%{content: "No embedding"})
+
+      assert {:ok, results} = Memory.search_by_similarity(@fake_embedding)
+      assert length(results) == 1
+      assert hd(results).content == "Has embedding"
+    end
+
+    test "respects limit option" do
+      for i <- 1..5, do: create_memory!(%{content: "Memory #{i}", embedding: @fake_embedding})
+
+      assert {:ok, results} = Memory.search_by_similarity(@fake_embedding, limit: 2)
+      assert length(results) == 2
+    end
+
+    test "returns empty list when no entries have embeddings" do
+      create_memory!(%{content: "No embedding"})
+
+      assert {:ok, []} = Memory.search_by_similarity(@fake_embedding)
+    end
+
+    test "applies filters" do
+      create_memory!(%{content: "Fact", memory_type: "fact", embedding: @fake_embedding})
+
+      create_memory!(%{
+        content: "Preference",
+        memory_type: "preference",
+        embedding: @fake_embedding_2
+      })
+
+      assert {:ok, results} = Memory.search_by_similarity(@fake_embedding, memory_type: "fact")
+      assert length(results) == 1
+      assert hd(results).memory_type == "fact"
+    end
+
+    test "returns {:error, :memory_disabled} when disabled" do
+      Application.put_env(:ollama_chat, :memory_enabled, false)
+      on_exit(fn -> Application.put_env(:ollama_chat, :memory_enabled, true) end)
+
+      assert {:error, :memory_disabled} = Memory.search_by_similarity(@fake_embedding)
+    end
+  end
+
+  describe "search_by_similarity_with_scores/2" do
+    test "returns entries with distance scores" do
+      create_memory!(%{content: "Test", embedding: @fake_embedding})
+
+      assert {:ok, [{entry, distance}]} = Memory.search_by_similarity_with_scores(@fake_embedding)
+      assert entry.content == "Test"
+      assert is_float(distance)
+      # Same vector should have distance ~0
+      assert distance < 0.001
+    end
+
+    test "scores increase with less similar embeddings" do
+      create_memory!(%{content: "Same", embedding: @fake_embedding})
+      create_memory!(%{content: "Different", embedding: @fake_embedding_2})
+
+      assert {:ok, [{_, score1}, {_, score2}]} =
+               Memory.search_by_similarity_with_scores(@fake_embedding)
+
+      assert score1 < score2
+    end
+
+    test "returns {:error, :memory_disabled} when disabled" do
+      Application.put_env(:ollama_chat, :memory_enabled, false)
+      on_exit(fn -> Application.put_env(:ollama_chat, :memory_enabled, true) end)
+
+      assert {:error, :memory_disabled} = Memory.search_by_similarity_with_scores(@fake_embedding)
     end
   end
 end

@@ -67,6 +67,9 @@ config :ollama_chat, :mcp_servers, []
 # Memory system — set to false to run without a database
 config :ollama_chat, :memory_enabled, true
 
+# Embedding model for semantic memory search (must be pulled in Ollama)
+config :ollama_chat, :ollama_embedding_model, "nomic-embed-text"
+
 config :ollama_chat, :mcp_config_path, nil
 
 # Import environment specific config. This must remain at the bottom

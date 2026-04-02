@@ -96,6 +96,40 @@ defmodule OllamaChat.Memory do
     |> Repo.insert!()
   end
 
+  @doc """
+  Creates a memory entry and asynchronously generates an embedding.
+
+  Returns `{:ok, entry}` immediately. The embedding is generated in a background
+  Task and will be available on subsequent reads.
+
+  ## Options
+
+  - `:embedding_fn` — Override the embedding generation function (for testing)
+  """
+  def create_memory_with_embedding(attrs, opts \\ []) do
+    with {:ok, entry} <- create_memory(attrs) do
+      embedding_fn = Keyword.get(opts, :embedding_fn)
+
+      Task.start(fn ->
+        if embedding_fn do
+          case embedding_fn.(entry.content) do
+            {:ok, embedding} ->
+              OllamaChat.Embeddings.store_embedding(entry, embedding)
+
+            {:error, reason} ->
+              Logger.warning(
+                "Failed to generate embedding for memory #{entry.id}: #{inspect(reason)}"
+              )
+          end
+        else
+          OllamaChat.Embeddings.generate_and_store(entry, opts)
+        end
+      end)
+
+      {:ok, entry}
+    end
+  end
+
   # ── Read ────────────────────────────────────────────────────────────────────
 
   @doc """
@@ -339,6 +373,105 @@ defmodule OllamaChat.Memory do
           desc: m.last_accessed_at,
           desc: m.updated_at
         )
+        |> limit(^limit)
+        |> Repo.all()
+
+      {:ok, result}
+    end)
+  end
+
+  @doc """
+  Searches memories using PostgreSQL full-text search with ranking.
+
+  Uses `to_tsvector` and `plainto_tsquery` for natural language search
+  with relevance ranking via `ts_rank`. This is more effective than ILIKE
+  for multi-word queries and provides relevance scoring.
+
+  Returns `{:ok, [entries]}` on success or `{:error, reason}` when unavailable.
+
+  ## Options
+
+  - `:limit` — Maximum results (default: 10)
+  - Plus all filter options from `list_memories/1`
+  """
+  def search_by_fulltext(query_text, opts \\ []) when is_binary(query_text) do
+    with_db(fn ->
+      limit = Keyword.get(opts, :limit, 10)
+
+      result =
+        Entry
+        |> where(
+          [m],
+          fragment(
+            "to_tsvector('english', ?) @@ plainto_tsquery('english', ?)",
+            m.content,
+            ^query_text
+          )
+        )
+        |> apply_filters(opts)
+        |> order_by(
+          [m],
+          desc:
+            fragment(
+              "ts_rank(to_tsvector('english', ?), plainto_tsquery('english', ?))",
+              m.content,
+              ^query_text
+            )
+        )
+        |> limit(^limit)
+        |> Repo.all()
+
+      {:ok, result}
+    end)
+  end
+
+  @doc """
+  Searches memories by semantic similarity using pgvector cosine distance.
+
+  Requires a pre-computed query embedding vector. Only searches memories
+  that have embeddings. Results are ordered by similarity (closest first).
+
+  Returns `{:ok, [entries]}` on success or `{:error, reason}` when unavailable.
+
+  ## Options
+
+  - `:limit` — Maximum results (default: 10)
+  - Plus all filter options from `list_memories/1`
+  """
+  def search_by_similarity(query_embedding, opts \\ []) when is_list(query_embedding) do
+    with_db(fn ->
+      limit = Keyword.get(opts, :limit, 10)
+      vector = Pgvector.new(query_embedding)
+
+      result =
+        Entry
+        |> where([m], not is_nil(m.embedding))
+        |> apply_filters(opts)
+        |> order_by([m], asc: fragment("? <=> ?", m.embedding, ^vector))
+        |> limit(^limit)
+        |> Repo.all()
+
+      {:ok, result}
+    end)
+  end
+
+  @doc """
+  Like `search_by_similarity/2` but includes cosine distance scores.
+
+  Returns `{:ok, [{entry, distance}]}` where distance is a float (0.0 = identical).
+  """
+  def search_by_similarity_with_scores(query_embedding, opts \\ [])
+      when is_list(query_embedding) do
+    with_db(fn ->
+      limit = Keyword.get(opts, :limit, 10)
+      vector = Pgvector.new(query_embedding)
+
+      result =
+        Entry
+        |> where([m], not is_nil(m.embedding))
+        |> apply_filters(opts)
+        |> select([m], {m, fragment("? <=> ?", m.embedding, ^vector)})
+        |> order_by([m], asc: fragment("? <=> ?", m.embedding, ^vector))
         |> limit(^limit)
         |> Repo.all()
 
