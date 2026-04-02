@@ -55,6 +55,25 @@ if config_env() == :prod do
 
   host = System.get_env("PHX_HOST") || "example.com"
 
+  # Database configuration for production
+  if database_url = System.get_env("OLLAMA_CHAT_DB_URL") do
+    config :ollama_chat, OllamaChat.Repo,
+      url: database_url,
+      pool_size: String.to_integer(System.get_env("OLLAMA_CHAT_DB_POOL_SIZE", "10")),
+      types: OllamaChat.PostgrexTypes
+  else
+    config :ollama_chat, OllamaChat.Repo,
+      database: System.get_env("OLLAMA_CHAT_DB_NAME", "ollama_chat_prod"),
+      username: System.get_env("OLLAMA_CHAT_DB_USERNAME", "ollama_chat"),
+      password:
+        System.get_env("OLLAMA_CHAT_DB_PASSWORD") ||
+          raise("OLLAMA_CHAT_DB_PASSWORD must be set in production"),
+      hostname: System.get_env("OLLAMA_CHAT_DB_HOSTNAME", "localhost"),
+      port: String.to_integer(System.get_env("OLLAMA_CHAT_DB_PORT", "5432")),
+      pool_size: String.to_integer(System.get_env("OLLAMA_CHAT_DB_POOL_SIZE", "10")),
+      types: OllamaChat.PostgrexTypes
+  end
+
   config :ollama_chat, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :ollama_chat, OllamaChatWeb.Endpoint,

@@ -57,6 +57,7 @@ defmodule OllamaChat.Application do
 
     children = [
       OllamaChatWeb.Telemetry,
+      OllamaChat.Repo,
       {DNSCluster, query: Application.get_env(:ollama_chat, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: OllamaChat.PubSub},
       # Finch HTTP client with larger pool for Ollama streaming

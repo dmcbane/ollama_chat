@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    image: ollama-chat-postgres:latest
+    container_name: ollama-chat-postgres
+    environment:
+      POSTGRES_USER: ${OLLAMA_CHAT_DB_USERNAME:-ollama_chat}
+      POSTGRES_PASSWORD: ${OLLAMA_CHAT_DB_PASSWORD:-ollama_chat}
+      POSTGRES_DB: ${OLLAMA_CHAT_DB_NAME:-ollama_chat_dev}
+    ports:
+      - "${OLLAMA_CHAT_DB_PORT:-5432}:5432"
+    volumes:
+      - ${OLLAMA_CHAT_POSTGRES_DATA_DIR:-./priv/postgres_data}:/var/lib/postgresql/data:Z
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - ollama-chat-network
+
+networks:
+  ollama-chat-network:
+    driver: bridge

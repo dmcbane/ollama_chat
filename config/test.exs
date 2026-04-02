@@ -31,3 +31,14 @@ config :phoenix,
 config :ollama_chat,
        :mcp_config_path,
        Path.join(System.tmp_dir!(), "ollama_chat_test/mcp_servers.json")
+
+# Database configuration for tests
+config :ollama_chat, OllamaChat.Repo,
+  database: "ollama_chat_test#{System.get_env("MIX_TEST_PARTITION")}",
+  username: System.get_env("OLLAMA_CHAT_DB_USERNAME", "ollama_chat"),
+  password: System.get_env("OLLAMA_CHAT_DB_PASSWORD", "ollama_chat"),
+  hostname: System.get_env("OLLAMA_CHAT_DB_HOSTNAME", "localhost"),
+  port: String.to_integer(System.get_env("OLLAMA_CHAT_DB_PORT", "5432")),
+  pool: Ecto.Adapters.SQL.Sandbox,
+  pool_size: System.schedulers_online() * 2,
+  types: OllamaChat.PostgrexTypes

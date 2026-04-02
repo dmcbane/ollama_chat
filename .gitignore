@@ -42,3 +42,6 @@ npm-debug.log
 
 # Ignore environment file
 .env
+
+# PostgreSQL data directory (container volume)
+/priv/postgres_data/

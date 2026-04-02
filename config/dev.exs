@@ -161,3 +161,15 @@ config :ollama_chat, :mcp_servers, [
 config :ollama_chat,
   health_check_enabled: true,
   health_check_interval: 30_000
+
+# Database configuration for development
+config :ollama_chat, OllamaChat.Repo,
+  database: System.get_env("OLLAMA_CHAT_DB_NAME", "ollama_chat_dev"),
+  username: System.get_env("OLLAMA_CHAT_DB_USERNAME", "ollama_chat"),
+  password: System.get_env("OLLAMA_CHAT_DB_PASSWORD", "ollama_chat"),
+  hostname: System.get_env("OLLAMA_CHAT_DB_HOSTNAME", "localhost"),
+  port: String.to_integer(System.get_env("OLLAMA_CHAT_DB_PORT", "5432")),
+  pool_size: 10,
+  types: OllamaChat.PostgrexTypes,
+  stacktrace: true,
+  show_sensitive_data_on_connection_error: true
