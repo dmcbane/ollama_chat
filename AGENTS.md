@@ -31,6 +31,8 @@ mix compile --warnings-as-errors    # Check for warnings
 mix ecto.create            # Create database
 mix ecto.migrate           # Run migrations
 mix ecto.reset             # Drop + recreate + migrate
+mix memory.backfill    # Generate embeddings for memories without them
+mix memory.backfill --batch-size 100  # With custom batch size
 ```
 
 ## Architecture
@@ -46,12 +48,13 @@ mix ecto.reset             # Drop + recreate + migrate
 - `OllamaChat.Memory` (`lib/ollama_chat/memory.ex`) — Context module for LLM memory: CRUD operations, text search, retrieval ranking. Backed by PostgreSQL + pgvector
 - `OllamaChat.Memory.Entry` (`lib/ollama_chat/memory/entry.ex`) — Ecto schema for memory entries (facts, preferences, context, episodic)
 - `OllamaChat.Repo` (`lib/ollama_chat/repo.ex`) — Ecto Repo for PostgreSQL with pgvector type support
+- `OllamaChat.Embeddings` (`lib/ollama_chat/embeddings.ex`) — Embedding pipeline: generate, store, and backfill vector embeddings for memory entries. Supports injectable `:embedding_fn` for testing
 
 **Streaming flow:** User sends message → spawned process calls `OllamaClient.chat_stream/3` → NDJSON chunks sent as `{:stream_chunk, id, content}` messages to LiveView → accumulated and rendered in real-time → `{:stream_done, id}` finalizes
 
 **Error recovery:** Connection failures trigger `ensure_ollama_running/0` which can auto-start Ollama, then retry with a 2-second delay.
 
-**Environment variables** (see `.env.example`): `OLLAMA_BASE_URL`, `OLLAMA_DEFAULT_MODEL`, `OLLAMA_START_COMMAND`, `OLLAMA_KILL_COMMAND`, `OLLAMA_CHAT_PORT`, `OLLAMA_HEALTH_CHECK_ENABLED`, `OLLAMA_HEALTH_CHECK_INTERVAL_MS`, `MCP_CONFIG_PATH`, `OLLAMA_CHAT_DB_USERNAME`, `OLLAMA_CHAT_DB_PASSWORD`, `OLLAMA_CHAT_DB_HOSTNAME`, `OLLAMA_CHAT_DB_NAME`, `OLLAMA_CHAT_DB_PORT`, `OLLAMA_CHAT_DB_URL`
+**Environment variables** (see `.env.example`): `OLLAMA_BASE_URL`, `OLLAMA_DEFAULT_MODEL`, `OLLAMA_START_COMMAND`, `OLLAMA_KILL_COMMAND`, `OLLAMA_CHAT_PORT`, `OLLAMA_HEALTH_CHECK_ENABLED`, `OLLAMA_HEALTH_CHECK_INTERVAL_MS`, `MCP_CONFIG_PATH`, `OLLAMA_CHAT_DB_USERNAME`, `OLLAMA_CHAT_DB_PASSWORD`, `OLLAMA_CHAT_DB_HOSTNAME`, `OLLAMA_CHAT_DB_NAME`, `OLLAMA_CHAT_DB_PORT`, `OLLAMA_CHAT_DB_URL`, `OLLAMA_EMBEDDING_MODEL`
 
 ## Project guidelines
 

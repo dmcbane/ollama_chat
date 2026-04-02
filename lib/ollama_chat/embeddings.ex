@@ -2,21 +2,22 @@ defmodule OllamaChat.Embeddings do
   @moduledoc """
   Generates and manages vector embeddings for memory content.
 
-  Provides functions to store embeddings on memory entries, perform semantic
-  similarity search using pgvector's cosine distance operator, and manage
-  the embedding lifecycle (backfill, regenerate).
+  Uses Ollama's embedding API (nomic-embed-text by default) to generate
+  768-dimensional vector embeddings stored in PostgreSQL via pgvector.
+
+  ## Testing
+
+  All functions that generate embeddings accept an `:embedding_fn` option
+  to override the default `OllamaClient.generate_embedding/1` call.
+  This enables unit testing without a running Ollama instance.
 
   ## Error Handling
 
   All functions return `{:ok, result}` or `{:error, reason}` tuples.
   Errors are never swallowed — callers can always distinguish success from failure.
-
-  ## Embedding Model
-
-  The default embedding model is `nomic-embed-text` (768 dimensions).
-  Configure via the `:ollama_embedding_model` application env or
-  the `OLLAMA_EMBEDDING_MODEL` environment variable.
   """
+
+  require Logger
 
   import Ecto.Query, warn: false
 
@@ -25,7 +26,97 @@ defmodule OllamaChat.Embeddings do
   alias OllamaChat.OllamaClient
   alias OllamaChat.Repo
 
-  require Logger
+  @doc """
+  Generates an embedding for the given memory entry's content and stores it.
+
+  Returns `{:ok, updated_entry}` on success or `{:error, reason}` on failure.
+  The entry is not modified when embedding generation fails.
+
+  ## Options
+
+  - `:embedding_fn` — Function `(text -> {:ok, embedding} | {:error, reason})`
+    to use instead of `OllamaClient.generate_embedding/1` (useful for testing)
+  """
+  def generate_and_store(%Entry{} = entry, opts \\ []) do
+    embedding_fn = Keyword.get(opts, :embedding_fn, &default_embedding_fn/1)
+
+    case embedding_fn.(entry.content) do
+      {:ok, embedding} ->
+        # Use Ecto.Changeset.change/2 directly because Entry.update_changeset/2
+        # does not cast the :embedding field. change/2 sets the field without
+        # going through cast, and Repo.update/1 will dump the value through
+        # Pgvector.Ecto.Vector appropriately.
+        entry
+        |> Ecto.Changeset.change(%{embedding: Pgvector.new(embedding)})
+        |> Repo.update()
+
+      {:error, reason} ->
+        Logger.warning("Failed to generate embedding for memory #{entry.id}: #{inspect(reason)}")
+
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Generates an embedding vector for the given text without storing it.
+
+  Returns `{:ok, embedding}` where embedding is a list of floats,
+  or `{:error, reason}` on failure.
+
+  ## Options
+
+  - `:embedding_fn` — Override the embedding generation function
+  """
+  def generate(text, opts \\ []) do
+    embedding_fn = Keyword.get(opts, :embedding_fn, &default_embedding_fn/1)
+    embedding_fn.(text)
+  end
+
+  @doc """
+  Returns `true` if the given memory entry needs an embedding generated.
+  """
+  def needs_embedding?(%Entry{embedding: nil}), do: true
+  def needs_embedding?(%Entry{}), do: false
+
+  @doc """
+  Generates embeddings for all memory entries that don't have one yet.
+
+  Processes entries in batches, continuing through failures so that a single
+  broken entry does not block the rest. Returns a summary of results.
+
+  Returns `{:ok, %{success: count, failed: count, skipped: count, total: count}}`
+  or `{:error, reason}` if the memory system is unavailable.
+
+  ## Options
+
+  - `:batch_size` — Number of entries to process at a time (default: 50)
+  - `:embedding_fn` — Override the embedding generation function
+  """
+  def backfill(opts \\ []) do
+    if Memory.enabled?() do
+      batch_size = Keyword.get(opts, :batch_size, 50)
+      embedding_fn = Keyword.get(opts, :embedding_fn, &default_embedding_fn/1)
+
+      case Memory.count_memories() do
+        {:ok, total} ->
+          {success, failed, skipped} =
+            do_backfill(batch_size, embedding_fn, 0, {0, 0, 0})
+
+          {:ok,
+           %{
+             success: success,
+             failed: failed,
+             skipped: skipped,
+             total: total
+           }}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      {:error, :memory_disabled}
+    end
+  end
 
   @doc """
   Returns the configured embedding model name.
@@ -37,20 +128,6 @@ defmodule OllamaChat.Embeddings do
   end
 
   @doc """
-  Generates an embedding for the given text using the Ollama embedding API.
-
-  Returns `{:ok, embedding}` where embedding is a list of floats,
-  or `{:error, reason}` on failure.
-
-  ## Options
-
-  - `:model` — embedding model to use (default: `embedding_model/0`)
-  """
-  def generate(text, opts \\ []) when is_binary(text) do
-    OllamaClient.generate_embedding(text, opts)
-  end
-
-  @doc """
   Stores a pre-computed embedding vector on a memory entry.
 
   Returns `{:ok, updated_entry}` on success or `{:error, reason}` on failure.
@@ -58,176 +135,69 @@ defmodule OllamaChat.Embeddings do
   The embedding must be a non-empty list of numbers matching the expected
   dimensionality (768 for nomic-embed-text).
   """
-  def store_embedding(nil, _embedding) do
-    {:error, :nil_entry}
-  end
-
-  def store_embedding(_entry, []) do
-    {:error, :empty_embedding}
-  end
-
-  def store_embedding(_entry, nil) do
-    {:error, :empty_embedding}
-  end
+  def store_embedding(nil, _embedding), do: {:error, :nil_entry}
+  def store_embedding(_entry, nil), do: {:error, :empty_embedding}
+  def store_embedding(_entry, []), do: {:error, :empty_embedding}
 
   def store_embedding(%Entry{} = entry, embedding) when is_list(embedding) do
-    if Memory.enabled?() do
-      vector = Pgvector.new(embedding)
+    entry
+    |> Ecto.Changeset.change(%{embedding: Pgvector.new(embedding)})
+    |> Repo.update()
+  end
 
-      entry
-      |> Ecto.Changeset.change(%{embedding: vector})
-      |> Repo.update()
+  @doc """
+  Checks if the configured embedding model is available in Ollama.
+
+  Returns `true` if the model is listed, `false` otherwise (including
+  when the Ollama API is unreachable).
+  """
+  def embedding_model_available? do
+    model = embedding_model()
+
+    case OllamaClient.list_models() do
+      {:ok, models} ->
+        Enum.any?(models, fn m -> String.starts_with?(m, model) end)
+
+      {:error, _} ->
+        false
+    end
+  end
+
+  # ── Private ─────────────────────────────────────────────────────────────────
+
+  defp default_embedding_fn(text) do
+    OllamaClient.generate_embedding(text)
+  end
+
+  defp do_backfill(batch_size, embedding_fn, offset, {success, failed, skipped}) do
+    entries =
+      Entry
+      |> order_by([m], asc: m.inserted_at, asc: m.id)
+      |> limit(^batch_size)
+      |> offset(^offset)
+      |> Repo.all()
+
+    if entries == [] do
+      {success, failed, skipped}
     else
-      {:error, :memory_disabled}
-    end
-  rescue
-    e in [DBConnection.ConnectionError] ->
-      Logger.error("Memory database unavailable: #{Exception.message(e)}")
-      {:error, :database_unavailable}
-  end
-
-  @doc """
-  Generates an embedding for a memory entry's content and stores it.
-
-  Calls the Ollama embedding API, then updates the entry with the resulting vector.
-
-  Returns `{:ok, updated_entry}` on success or `{:error, reason}` on failure.
-
-  ## Options
-
-  - `:model` — embedding model to use (default: `embedding_model/0`)
-  """
-  def generate_and_store(%Entry{} = entry, opts \\ []) do
-    case generate(entry.content, opts) do
-      {:ok, embedding} ->
-        store_embedding(entry, embedding)
-
-      {:error, reason} ->
-        Logger.warning("Failed to generate embedding for memory #{entry.id}: #{inspect(reason)}")
-
-        {:error, reason}
-    end
-  end
-
-  @doc """
-  Performs semantic similarity search using pgvector cosine distance.
-
-  Takes a query embedding vector (list of floats) and returns memory entries
-  ordered by similarity (most similar first).
-
-  Returns `{:ok, [entries]}` on success or `{:error, reason}` when unavailable.
-
-  ## Options
-
-  - `:limit` — maximum number of results (default: 10)
-  - `:min_importance` — minimum importance threshold (default: nil)
-  - `:memory_type` — filter by memory type (default: nil)
-  """
-  def semantic_search(query_embedding, opts \\ [])
-
-  def semantic_search(nil, _opts), do: {:error, :nil_embedding}
-  def semantic_search([], _opts), do: {:error, :empty_embedding}
-
-  def semantic_search(query_embedding, opts) when is_list(query_embedding) do
-    if Memory.enabled?() do
-      limit = Keyword.get(opts, :limit, 10)
-      min_importance = Keyword.get(opts, :min_importance)
-      memory_type = Keyword.get(opts, :memory_type)
-
-      vector = Pgvector.new(query_embedding)
-
-      query =
-        Entry
-        |> where([m], not is_nil(m.embedding))
-        |> order_by([m], fragment("embedding <=> ?", ^vector))
-        |> limit(^limit)
-
-      query =
-        if min_importance do
-          where(query, [m], m.importance >= ^min_importance)
-        else
-          query
-        end
-
-      query =
-        if memory_type do
-          where(query, [m], m.memory_type == ^memory_type)
-        else
-          query
-        end
-
-      {:ok, Repo.all(query)}
-    else
-      {:error, :memory_disabled}
-    end
-  rescue
-    e in [DBConnection.ConnectionError] ->
-      Logger.error("Memory database unavailable: #{Exception.message(e)}")
-      {:error, :database_unavailable}
-  end
-
-  @doc """
-  Returns memory entries that do not yet have embeddings.
-
-  Useful for backfilling embeddings on existing memories.
-
-  Returns `{:ok, [entries]}` on success or `{:error, reason}` when unavailable.
-
-  ## Options
-
-  - `:limit` — maximum entries to return (default: 100)
-  """
-  def entries_without_embeddings(opts \\ []) do
-    if Memory.enabled?() do
-      limit = Keyword.get(opts, :limit, 100)
-
-      result =
-        Entry
-        |> where([m], is_nil(m.embedding))
-        |> order_by([m], asc: m.inserted_at)
-        |> limit(^limit)
-        |> Repo.all()
-
-      {:ok, result}
-    else
-      {:error, :memory_disabled}
-    end
-  rescue
-    e in [DBConnection.ConnectionError] ->
-      Logger.error("Memory database unavailable: #{Exception.message(e)}")
-      {:error, :database_unavailable}
-  end
-
-  @doc """
-  Backfills embeddings for all memory entries that don't have one.
-
-  Calls the Ollama embedding API for each entry sequentially.
-  Returns `{:ok, %{succeeded: count, failed: count}}` with a summary.
-
-  ## Options
-
-  - `:model` — embedding model to use (default: `embedding_model/0`)
-  - `:limit` — max entries to process (default: 100)
-  """
-  def backfill(opts \\ []) do
-    with {:ok, entries} <- entries_without_embeddings(opts) do
-      results =
-        Enum.reduce(entries, %{succeeded: 0, failed: 0}, fn entry, acc ->
-          case generate_and_store(entry, opts) do
-            {:ok, _} ->
-              %{acc | succeeded: acc.succeeded + 1}
-
-            {:error, reason} ->
-              Logger.warning("Backfill failed for memory #{entry.id}: #{inspect(reason)}")
-              %{acc | failed: acc.failed + 1}
+      {batch_success, batch_failed, batch_skipped} =
+        Enum.reduce(entries, {0, 0, 0}, fn entry, {s, f, sk} ->
+          if needs_embedding?(entry) do
+            case generate_and_store(entry, embedding_fn: embedding_fn) do
+              {:ok, _} -> {s + 1, f, sk}
+              {:error, _} -> {s, f + 1, sk}
+            end
+          else
+            {s, f, sk + 1}
           end
         end)
 
-      Logger.info(
-        "Embedding backfill complete: #{results.succeeded} succeeded, #{results.failed} failed"
+      do_backfill(
+        batch_size,
+        embedding_fn,
+        offset + batch_size,
+        {success + batch_success, failed + batch_failed, skipped + batch_skipped}
       )
-
-      {:ok, results}
     end
   end
 end
