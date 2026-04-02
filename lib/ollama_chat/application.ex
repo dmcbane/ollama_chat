@@ -4,6 +4,7 @@ defmodule OllamaChat.Application do
   @moduledoc false
 
   use Application
+  require Logger
 
   @impl true
   def start(_type, _args) do
@@ -55,21 +56,22 @@ defmodule OllamaChat.Application do
       ]
     }
 
-    children = [
-      OllamaChatWeb.Telemetry,
-      OllamaChat.Repo,
-      {DNSCluster, query: Application.get_env(:ollama_chat, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: OllamaChat.PubSub},
-      # Finch HTTP client with larger pool for Ollama streaming
-      {Finch, name: OllamaChat.Finch, pools: finch_pools},
-      # MCP support
-      OllamaChat.MCPRegistry,
-      OllamaChat.MCPClient,
-      # Start a worker by calling: OllamaChat.Worker.start_link(arg)
-      # {OllamaChat.Worker, arg},
-      # Start to serve requests, typically the last entry
-      OllamaChatWeb.Endpoint
-    ]
+    children =
+      [
+        OllamaChatWeb.Telemetry
+      ] ++
+        maybe_repo() ++
+        [
+          {DNSCluster, query: Application.get_env(:ollama_chat, :dns_cluster_query) || :ignore},
+          {Phoenix.PubSub, name: OllamaChat.PubSub},
+          # Finch HTTP client with larger pool for Ollama streaming
+          {Finch, name: OllamaChat.Finch, pools: finch_pools},
+          # MCP support
+          OllamaChat.MCPRegistry,
+          OllamaChat.MCPClient,
+          # Start to serve requests, typically the last entry
+          OllamaChatWeb.Endpoint
+        ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -102,6 +104,15 @@ defmodule OllamaChat.Application do
         # Don't block startup for other errors (permissions, etc.)
         # Let Bandit surface those naturally
         :ok
+    end
+  end
+
+  defp maybe_repo do
+    if Application.get_env(:ollama_chat, :memory_enabled, true) do
+      [OllamaChat.Repo]
+    else
+      Logger.info("Memory system disabled — skipping database startup")
+      []
     end
   end
 

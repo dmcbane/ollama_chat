@@ -64,6 +64,9 @@ config :phoenix, :json_library, Jason
 # Disabled by default, enable in dev.exs or runtime.exs
 config :ollama_chat, :mcp_enabled, false
 config :ollama_chat, :mcp_servers, []
+# Memory system — set to false to run without a database
+config :ollama_chat, :memory_enabled, true
+
 config :ollama_chat, :mcp_config_path, nil
 
 # Import environment specific config. This must remain at the bottom

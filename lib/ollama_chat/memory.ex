@@ -18,6 +18,17 @@ defmodule OllamaChat.Memory do
   - `:auto_extract` — Automatically extracted from conversations
   - `:llm_explicit` — Explicitly saved by the LLM via tool call
   - `:user_manual` — Manually created by the user
+
+  ## Resilience
+
+  All database operations gracefully handle unavailability:
+  - When `memory_enabled` config is `false`, mutations return `{:error, :memory_disabled}`
+    and queries return sensible defaults (empty lists, zero counts).
+  - When the database is unreachable, mutations return `{:error, :database_unavailable}`
+    and queries return the same defaults. Postgrex reconnects automatically in the
+    background, so recovery is seamless.
+  - The bang functions (`create_memory!/1`, `get_memory!/1`) are NOT wrapped — they
+    raise on failure as expected, for use in scripts, seeds, and tests.
   """
 
   import Ecto.Query, warn: false
@@ -26,6 +37,22 @@ defmodule OllamaChat.Memory do
   alias OllamaChat.Repo
 
   require Logger
+
+  # ── Availability ────────────────────────────────────────────────────────────
+
+  @doc """
+  Returns `true` if the memory system is available (enabled and database reachable).
+  """
+  def available? do
+    enabled?() and database_connected?()
+  end
+
+  @doc """
+  Returns `true` if the memory system is enabled in configuration.
+  """
+  def enabled? do
+    Application.get_env(:ollama_chat, :memory_enabled, true)
+  end
 
   # ── Create ──────────────────────────────────────────────────────────────────
 
@@ -41,13 +68,15 @@ defmodule OllamaChat.Memory do
       {:error, %Ecto.Changeset{}}
   """
   def create_memory(attrs) when is_map(attrs) do
-    %Entry{}
-    |> Entry.changeset(attrs)
-    |> Repo.insert()
-    |> tap_ok(fn entry ->
-      Logger.info(
-        "Memory created: #{entry.id} (#{entry.memory_type}) — #{truncate(entry.content)}"
-      )
+    mutate_or_error(fn ->
+      %Entry{}
+      |> Entry.changeset(attrs)
+      |> Repo.insert()
+      |> tap_ok(fn entry ->
+        Logger.info(
+          "Memory created: #{entry.id} (#{entry.memory_type}) — #{truncate(entry.content)}"
+        )
+      end)
     end)
   end
 
@@ -68,7 +97,7 @@ defmodule OllamaChat.Memory do
   Returns `nil` if the entry does not exist.
   """
   def get_memory(id) when is_binary(id) do
-    Repo.get(Entry, id)
+    query_or_default(nil, fn -> Repo.get(Entry, id) end)
   end
 
   @doc """
@@ -91,15 +120,17 @@ defmodule OllamaChat.Memory do
   - `:min_importance` — Minimum importance threshold (0.0–1.0)
   """
   def list_memories(opts \\ []) do
-    limit = Keyword.get(opts, :limit, 50)
-    offset = Keyword.get(opts, :offset, 0)
+    query_or_default([], fn ->
+      limit = Keyword.get(opts, :limit, 50)
+      offset = Keyword.get(opts, :offset, 0)
 
-    Entry
-    |> apply_filters(opts)
-    |> order_by([m], desc: m.importance, desc: m.updated_at)
-    |> limit(^limit)
-    |> offset(^offset)
-    |> Repo.all()
+      Entry
+      |> apply_filters(opts)
+      |> order_by([m], desc: m.importance, desc: m.updated_at)
+      |> limit(^limit)
+      |> offset(^offset)
+      |> Repo.all()
+    end)
   end
 
   @doc """
@@ -108,9 +139,11 @@ defmodule OllamaChat.Memory do
   Accepts the same filter options as `list_memories/1`.
   """
   def count_memories(opts \\ []) do
-    Entry
-    |> apply_filters(opts)
-    |> Repo.aggregate(:count)
+    query_or_default(0, fn ->
+      Entry
+      |> apply_filters(opts)
+      |> Repo.aggregate(:count)
+    end)
   end
 
   # ── Update ──────────────────────────────────────────────────────────────────
@@ -124,11 +157,13 @@ defmodule OllamaChat.Memory do
       {:ok, %Entry{}}
   """
   def update_memory(%Entry{} = entry, attrs) when is_map(attrs) do
-    entry
-    |> Entry.update_changeset(attrs)
-    |> Repo.update()
-    |> tap_ok(fn entry ->
-      Logger.info("Memory updated: #{entry.id} — #{truncate(entry.content)}")
+    mutate_or_error(fn ->
+      entry
+      |> Entry.update_changeset(attrs)
+      |> Repo.update()
+      |> tap_ok(fn entry ->
+        Logger.info("Memory updated: #{entry.id} — #{truncate(entry.content)}")
+      end)
     end)
   end
 
@@ -138,9 +173,11 @@ defmodule OllamaChat.Memory do
   Increments `access_count` and updates `last_accessed_at`.
   """
   def touch_memory(%Entry{} = entry) do
-    entry
-    |> Entry.access_changeset()
-    |> Repo.update()
+    mutate_or_error(fn ->
+      entry
+      |> Entry.access_changeset()
+      |> Repo.update()
+    end)
   end
 
   @doc """
@@ -149,11 +186,13 @@ defmodule OllamaChat.Memory do
   More efficient than touching one at a time — performs a single UPDATE query.
   """
   def touch_memories(memory_ids) when is_list(memory_ids) and memory_ids != [] do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    query_or_default({0, nil}, fn ->
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
 
-    Entry
-    |> where([m], m.id in ^memory_ids)
-    |> Repo.update_all(inc: [access_count: 1], set: [last_accessed_at: now])
+      Entry
+      |> where([m], m.id in ^memory_ids)
+      |> Repo.update_all(inc: [access_count: 1], set: [last_accessed_at: now])
+    end)
   end
 
   def touch_memories([]), do: {0, nil}
@@ -174,9 +213,11 @@ defmodule OllamaChat.Memory do
   Deletes a memory entry.
   """
   def delete_memory(%Entry{} = entry) do
-    Repo.delete(entry)
-    |> tap_ok(fn entry ->
-      Logger.info("Memory deleted: #{entry.id} — #{truncate(entry.content)}")
+    mutate_or_error(fn ->
+      Repo.delete(entry)
+      |> tap_ok(fn entry ->
+        Logger.info("Memory deleted: #{entry.id} — #{truncate(entry.content)}")
+      end)
     end)
   end
 
@@ -194,9 +235,11 @@ defmodule OllamaChat.Memory do
   Deletes all memories. Use with caution.
   """
   def delete_all_memories do
-    {count, _} = Repo.delete_all(Entry)
-    Logger.info("Deleted all #{count} memories")
-    {:ok, count}
+    mutate_or_error(fn ->
+      {count, _} = Repo.delete_all(Entry)
+      Logger.info("Deleted all #{count} memories")
+      {:ok, count}
+    end)
   end
 
   # ── Search ──────────────────────────────────────────────────────────────────
@@ -213,15 +256,17 @@ defmodule OllamaChat.Memory do
   - `:limit` — Maximum results (default: 10)
   """
   def search_by_text(query_text, opts \\ []) when is_binary(query_text) do
-    limit = Keyword.get(opts, :limit, 10)
-    pattern = "%#{sanitize_like(query_text)}%"
+    query_or_default([], fn ->
+      limit = Keyword.get(opts, :limit, 10)
+      pattern = "%#{sanitize_like(query_text)}%"
 
-    Entry
-    |> where([m], ilike(m.content, ^pattern))
-    |> apply_filters(opts)
-    |> order_by([m], desc: m.importance, desc: m.updated_at)
-    |> limit(^limit)
-    |> Repo.all()
+      Entry
+      |> where([m], ilike(m.content, ^pattern))
+      |> apply_filters(opts)
+      |> order_by([m], desc: m.importance, desc: m.updated_at)
+      |> limit(^limit)
+      |> Repo.all()
+    end)
   end
 
   @doc """
@@ -237,17 +282,19 @@ defmodule OllamaChat.Memory do
   - `:min_importance` — Minimum importance threshold
   """
   def retrieve_relevant(opts \\ []) do
-    limit = Keyword.get(opts, :limit, 10)
+    query_or_default([], fn ->
+      limit = Keyword.get(opts, :limit, 10)
 
-    Entry
-    |> apply_filters(opts)
-    |> order_by([m],
-      desc: m.importance,
-      desc: m.last_accessed_at,
-      desc: m.updated_at
-    )
-    |> limit(^limit)
-    |> Repo.all()
+      Entry
+      |> apply_filters(opts)
+      |> order_by([m],
+        desc: m.importance,
+        desc: m.last_accessed_at,
+        desc: m.updated_at
+      )
+      |> limit(^limit)
+      |> Repo.all()
+    end)
   end
 
   # ── Formatting ──────────────────────────────────────────────────────────────
@@ -281,39 +328,84 @@ defmodule OllamaChat.Memory do
   @doc """
   Returns summary statistics about stored memories.
   """
+  @empty_stats %{total: 0, by_type: %{}, by_source: %{}, average_importance: 0.0}
+
   def stats do
-    total = Repo.aggregate(Entry, :count)
+    query_or_default(@empty_stats, fn ->
+      total = Repo.aggregate(Entry, :count)
 
-    type_counts =
-      Entry
-      |> group_by([m], m.memory_type)
-      |> select([m], {m.memory_type, count(m.id)})
-      |> Repo.all()
-      |> Map.new()
+      type_counts =
+        Entry
+        |> group_by([m], m.memory_type)
+        |> select([m], {m.memory_type, count(m.id)})
+        |> Repo.all()
+        |> Map.new()
 
-    source_counts =
-      Entry
-      |> group_by([m], m.source)
-      |> select([m], {m.source, count(m.id)})
-      |> Repo.all()
-      |> Map.new()
+      source_counts =
+        Entry
+        |> group_by([m], m.source)
+        |> select([m], {m.source, count(m.id)})
+        |> Repo.all()
+        |> Map.new()
 
-    avg_importance =
-      case Repo.aggregate(Entry, :avg, :importance) do
-        nil -> 0.0
-        %Decimal{} = avg -> Decimal.to_float(avg) |> Float.round(2)
-        avg when is_float(avg) -> Float.round(avg, 2)
-      end
+      avg_importance =
+        case Repo.aggregate(Entry, :avg, :importance) do
+          nil -> 0.0
+          %Decimal{} = avg -> Decimal.to_float(avg) |> Float.round(2)
+          avg when is_float(avg) -> Float.round(avg, 2)
+        end
 
-    %{
-      total: total,
-      by_type: type_counts,
-      by_source: source_counts,
-      average_importance: avg_importance
-    }
+      %{
+        total: total,
+        by_type: type_counts,
+        by_source: source_counts,
+        average_importance: avg_importance
+      }
+    end)
   end
 
   # ── Private Helpers ─────────────────────────────────────────────────────────
+
+  # Wraps a database mutation that returns {:ok, _} | {:error, _}.
+  # Returns {:error, :memory_disabled} or {:error, :database_unavailable} on failure.
+  defp mutate_or_error(fun) when is_function(fun, 0) do
+    if enabled?() do
+      fun.()
+    else
+      {:error, :memory_disabled}
+    end
+  rescue
+    e in [DBConnection.ConnectionError] ->
+      log_db_unavailable(e)
+      {:error, :database_unavailable}
+  end
+
+  # Wraps a database query that returns data directly (list, integer, map, etc.).
+  # Returns the default value on failure instead of crashing.
+  defp query_or_default(default, fun) when is_function(fun, 0) do
+    if enabled?() do
+      fun.()
+    else
+      default
+    end
+  rescue
+    e in [DBConnection.ConnectionError] ->
+      log_db_unavailable(e)
+      default
+  end
+
+  defp database_connected? do
+    case Ecto.Adapters.SQL.query(Repo, "SELECT 1", []) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp log_db_unavailable(error) do
+    Logger.warning("Memory database unavailable: #{Exception.message(error)}")
+  end
 
   defp apply_filters(query, opts) do
     query

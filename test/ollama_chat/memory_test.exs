@@ -828,4 +828,125 @@ defmodule OllamaChat.MemoryTest do
       assert_in_delta stats.average_importance, 0.43, 0.01
     end
   end
+
+  describe "memory disabled via config" do
+    setup do
+      # Temporarily disable memory
+      original = Application.get_env(:ollama_chat, :memory_enabled, true)
+      Application.put_env(:ollama_chat, :memory_enabled, false)
+
+      on_exit(fn ->
+        Application.put_env(:ollama_chat, :memory_enabled, original)
+      end)
+
+      :ok
+    end
+
+    test "enabled?/0 returns false" do
+      refute Memory.enabled?()
+    end
+
+    test "available?/0 returns false" do
+      refute Memory.available?()
+    end
+
+    test "create_memory/1 returns {:error, :memory_disabled}" do
+      assert {:error, :memory_disabled} =
+               Memory.create_memory(%{
+                 content: "test",
+                 memory_type: "fact",
+                 source: "llm_explicit"
+               })
+    end
+
+    test "get_memory/1 returns nil" do
+      assert Memory.get_memory(Ecto.UUID.generate()) == nil
+    end
+
+    test "list_memories/0 returns empty list" do
+      assert Memory.list_memories() == []
+    end
+
+    test "count_memories/0 returns 0" do
+      assert Memory.count_memories() == 0
+    end
+
+    test "search_by_text/1 returns empty list" do
+      assert Memory.search_by_text("anything") == []
+    end
+
+    test "retrieve_relevant/0 returns empty list" do
+      assert Memory.retrieve_relevant() == []
+    end
+
+    test "stats/0 returns empty stats" do
+      assert Memory.stats() == %{
+               total: 0,
+               by_type: %{},
+               by_source: %{},
+               average_importance: 0.0
+             }
+    end
+
+    test "delete_all_memories/0 returns {:error, :memory_disabled}" do
+      assert {:error, :memory_disabled} = Memory.delete_all_memories()
+    end
+
+    test "touch_memories/1 returns {0, nil}" do
+      assert Memory.touch_memories([Ecto.UUID.generate()]) == {0, nil}
+    end
+
+    test "update_memory/2 returns {:error, :memory_disabled}" do
+      # Create an entry struct directly (not via DB) to test the wrapper
+      entry = %OllamaChat.Memory.Entry{
+        id: Ecto.UUID.generate(),
+        content: "test",
+        memory_type: "fact",
+        source: "llm_explicit",
+        importance: 0.5,
+        access_count: 0,
+        metadata: %{}
+      }
+
+      assert {:error, :memory_disabled} = Memory.update_memory(entry, %{content: "updated"})
+    end
+
+    test "delete_memory/1 returns {:error, :memory_disabled}" do
+      entry = %OllamaChat.Memory.Entry{
+        id: Ecto.UUID.generate(),
+        content: "test",
+        memory_type: "fact",
+        source: "llm_explicit",
+        importance: 0.5,
+        access_count: 0,
+        metadata: %{}
+      }
+
+      assert {:error, :memory_disabled} = Memory.delete_memory(entry)
+    end
+
+    test "touch_memory/1 returns {:error, :memory_disabled}" do
+      entry = %OllamaChat.Memory.Entry{
+        id: Ecto.UUID.generate(),
+        content: "test",
+        memory_type: "fact",
+        source: "llm_explicit",
+        importance: 0.5,
+        access_count: 0,
+        metadata: %{}
+      }
+
+      assert {:error, :memory_disabled} = Memory.touch_memory(entry)
+    end
+  end
+
+  describe "availability checks" do
+    test "enabled?/0 returns true by default" do
+      assert Memory.enabled?()
+    end
+
+    test "available?/0 returns true when database is connected" do
+      assert Memory.available?()
+    end
+  end
 end
