@@ -403,6 +403,11 @@ e4d9f8  - Fix MCP server configuration: Remove non-existent server
    - Monitor memory usage
    - Log tool usage patterns
 
+4. **Attachment Conversion**
+   - Containerized docling-serve
+   - Automated binary attachment conversion
+   - Auto-start and health integration
+
 ### Short-Term (Next Sprint)
 
 1. **Additional MCP Servers** (Optional)
