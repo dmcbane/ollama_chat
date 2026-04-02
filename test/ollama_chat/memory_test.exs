@@ -168,12 +168,12 @@ defmodule OllamaChat.MemoryTest do
   describe "get_memory/1" do
     test "returns memory by ID" do
       entry = create_memory!()
-      assert %Entry{id: id} = Memory.get_memory(entry.id)
+      assert {:ok, %Entry{id: id}} = Memory.get_memory(entry.id)
       assert id == entry.id
     end
 
     test "returns nil for non-existent ID" do
-      assert Memory.get_memory(Ecto.UUID.generate()) == nil
+      assert {:ok, nil} = Memory.get_memory(Ecto.UUID.generate())
     end
   end
 
@@ -196,20 +196,20 @@ defmodule OllamaChat.MemoryTest do
       _high = create_memory!(%{importance: 0.9, content: "high"})
       _mid = create_memory!(%{importance: 0.5, content: "mid"})
 
-      entries = Memory.list_memories()
+      {:ok, entries} = Memory.list_memories()
       importances = Enum.map(entries, & &1.importance)
       assert importances == [0.9, 0.5, 0.2]
     end
 
     test "returns empty list when no memories" do
-      assert Memory.list_memories() == []
+      assert {:ok, []} = Memory.list_memories()
     end
 
     test "filters by memory_type" do
       create_memory!(%{memory_type: "fact", content: "a fact"})
       create_memory!(%{memory_type: "preference", content: "a pref"})
 
-      entries = Memory.list_memories(memory_type: "fact")
+      {:ok, entries} = Memory.list_memories(memory_type: "fact")
       assert length(entries) == 1
       assert hd(entries).memory_type == "fact"
     end
@@ -219,7 +219,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{category: "food", content: "likes pizza"})
       create_memory!(%{content: "no category"})
 
-      entries = Memory.list_memories(category: "programming")
+      {:ok, entries} = Memory.list_memories(category: "programming")
       assert length(entries) == 1
       assert hd(entries).category == "programming"
     end
@@ -228,7 +228,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{source: "auto_extract", content: "auto"})
       create_memory!(%{source: "user_manual", content: "manual"})
 
-      entries = Memory.list_memories(source: "user_manual")
+      {:ok, entries} = Memory.list_memories(source: "user_manual")
       assert length(entries) == 1
       assert hd(entries).source == "user_manual"
     end
@@ -238,7 +238,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{importance: 0.7, content: "high"})
       create_memory!(%{importance: 0.9, content: "highest"})
 
-      entries = Memory.list_memories(min_importance: 0.7)
+      {:ok, entries} = Memory.list_memories(min_importance: 0.7)
       assert length(entries) == 2
       assert Enum.all?(entries, fn e -> e.importance >= 0.7 end)
     end
@@ -246,7 +246,7 @@ defmodule OllamaChat.MemoryTest do
     test "respects limit" do
       for i <- 1..5, do: create_memory!(%{content: "memory #{i}"})
 
-      entries = Memory.list_memories(limit: 3)
+      {:ok, entries} = Memory.list_memories(limit: 3)
       assert length(entries) == 3
     end
 
@@ -255,8 +255,8 @@ defmodule OllamaChat.MemoryTest do
         create_memory!(%{content: "memory #{i}", importance: i / 10.0})
       end
 
-      all = Memory.list_memories(limit: 50)
-      offset_entries = Memory.list_memories(limit: 50, offset: 2)
+      {:ok, all} = Memory.list_memories(limit: 50)
+      {:ok, offset_entries} = Memory.list_memories(limit: 50, offset: 2)
       assert length(offset_entries) == 3
       assert offset_entries == Enum.drop(all, 2)
     end
@@ -283,7 +283,7 @@ defmodule OllamaChat.MemoryTest do
         content: "wrong type"
       })
 
-      entries =
+      {:ok, entries} =
         Memory.list_memories(
           memory_type: "fact",
           source: "llm_explicit",
@@ -297,12 +297,12 @@ defmodule OllamaChat.MemoryTest do
 
   describe "count_memories/1" do
     test "returns 0 when no memories" do
-      assert Memory.count_memories() == 0
+      assert {:ok, 0} = Memory.count_memories()
     end
 
     test "returns correct count" do
       for i <- 1..3, do: create_memory!(%{content: "memory #{i}"})
-      assert Memory.count_memories() == 3
+      assert {:ok, 3} = Memory.count_memories()
     end
 
     test "respects filters" do
@@ -310,16 +310,16 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{memory_type: "fact", content: "fact 2"})
       create_memory!(%{memory_type: "preference", content: "pref 1"})
 
-      assert Memory.count_memories(memory_type: "fact") == 2
-      assert Memory.count_memories(memory_type: "preference") == 1
-      assert Memory.count_memories(memory_type: "episodic") == 0
+      assert {:ok, 2} = Memory.count_memories(memory_type: "fact")
+      assert {:ok, 1} = Memory.count_memories(memory_type: "preference")
+      assert {:ok, 0} = Memory.count_memories(memory_type: "episodic")
     end
 
     test "filters by min_importance" do
       create_memory!(%{importance: 0.3, content: "low"})
       create_memory!(%{importance: 0.8, content: "high"})
 
-      assert Memory.count_memories(min_importance: 0.5) == 1
+      assert {:ok, 1} = Memory.count_memories(min_importance: 0.5)
     end
   end
 
@@ -421,7 +421,7 @@ defmodule OllamaChat.MemoryTest do
       e2 = create_memory!(%{content: "second"})
       _e3 = create_memory!(%{content: "third, untouched"})
 
-      assert {2, _} = Memory.touch_memories([e1.id, e2.id])
+      assert {:ok, {2, _}} = Memory.touch_memories([e1.id, e2.id])
 
       updated1 = Memory.get_memory!(e1.id)
       updated2 = Memory.get_memory!(e2.id)
@@ -436,7 +436,7 @@ defmodule OllamaChat.MemoryTest do
       e1 = create_memory!(%{content: "touched"})
       e2 = create_memory!(%{content: "untouched"})
 
-      Memory.touch_memories([e1.id])
+      {:ok, _} = Memory.touch_memories([e1.id])
 
       untouched = Memory.get_memory!(e2.id)
       assert untouched.access_count == 0
@@ -444,7 +444,7 @@ defmodule OllamaChat.MemoryTest do
     end
 
     test "returns {0, nil} for empty list" do
-      assert {0, nil} = Memory.touch_memories([])
+      assert {:ok, {0, nil}} = Memory.touch_memories([])
     end
   end
 
@@ -490,7 +490,7 @@ defmodule OllamaChat.MemoryTest do
     test "deletes a memory entry" do
       entry = create_memory!()
       assert {:ok, %Entry{}} = Memory.delete_memory(entry)
-      assert Memory.get_memory(entry.id) == nil
+      assert {:ok, nil} = Memory.get_memory(entry.id)
     end
   end
 
@@ -498,7 +498,7 @@ defmodule OllamaChat.MemoryTest do
     test "deletes a memory entry by ID" do
       entry = create_memory!()
       assert {:ok, %Entry{}} = Memory.delete_memory_by_id(entry.id)
-      assert Memory.get_memory(entry.id) == nil
+      assert {:ok, nil} = Memory.get_memory(entry.id)
     end
 
     test "returns error tuple for non-existent ID" do
@@ -509,10 +509,10 @@ defmodule OllamaChat.MemoryTest do
   describe "delete_all_memories/0" do
     test "deletes all memories" do
       for i <- 1..5, do: create_memory!(%{content: "memory #{i}"})
-      assert Memory.count_memories() == 5
+      assert {:ok, 5} = Memory.count_memories()
 
       assert {:ok, 5} = Memory.delete_all_memories()
-      assert Memory.count_memories() == 0
+      assert {:ok, 0} = Memory.count_memories()
     end
 
     test "returns 0 when no memories exist" do
@@ -528,37 +528,37 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{content: "User enjoys cooking"})
       create_memory!(%{content: "Elixir is a functional language"})
 
-      results = Memory.search_by_text("Elixir")
+      {:ok, results} = Memory.search_by_text("Elixir")
       assert length(results) == 2
       assert Enum.all?(results, fn e -> String.contains?(e.content, "Elixir") end)
     end
 
     test "returns empty list when no matches" do
       create_memory!(%{content: "User likes Elixir"})
-      assert Memory.search_by_text("Python") == []
+      assert {:ok, []} = Memory.search_by_text("Python")
     end
 
     test "search is case insensitive" do
       create_memory!(%{content: "User likes ELIXIR programming"})
 
-      results = Memory.search_by_text("elixir")
+      {:ok, results} = Memory.search_by_text("elixir")
       assert length(results) == 1
 
-      results = Memory.search_by_text("ELIXIR")
+      {:ok, results} = Memory.search_by_text("ELIXIR")
       assert length(results) == 1
     end
 
     test "finds partial matches" do
       create_memory!(%{content: "Programming in Elixir is fun"})
 
-      results = Memory.search_by_text("Program")
+      {:ok, results} = Memory.search_by_text("Program")
       assert length(results) == 1
     end
 
     test "respects limit option" do
       for i <- 1..5, do: create_memory!(%{content: "Elixir fact #{i}"})
 
-      results = Memory.search_by_text("Elixir", limit: 2)
+      {:ok, results} = Memory.search_by_text("Elixir", limit: 2)
       assert length(results) == 2
     end
 
@@ -566,7 +566,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{content: "Elixir low", importance: 0.2})
       create_memory!(%{content: "Elixir high", importance: 0.9})
 
-      results = Memory.search_by_text("Elixir")
+      {:ok, results} = Memory.search_by_text("Elixir")
       assert hd(results).importance == 0.9
     end
 
@@ -574,7 +574,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{content: "Elixir fact", memory_type: "fact"})
       create_memory!(%{content: "Elixir preference", memory_type: "preference"})
 
-      results = Memory.search_by_text("Elixir", memory_type: "fact")
+      {:ok, results} = Memory.search_by_text("Elixir", memory_type: "fact")
       assert length(results) == 1
       assert hd(results).memory_type == "fact"
     end
@@ -583,7 +583,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{content: "100% complete"})
       create_memory!(%{content: "something else"})
 
-      results = Memory.search_by_text("100%")
+      {:ok, results} = Memory.search_by_text("100%")
       assert length(results) == 1
       assert hd(results).content == "100% complete"
     end
@@ -597,7 +597,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{content: "high importance", importance: 0.9})
       create_memory!(%{content: "mid importance", importance: 0.5})
 
-      results = Memory.retrieve_relevant()
+      {:ok, results} = Memory.retrieve_relevant()
       importances = Enum.map(results, & &1.importance)
       assert importances == [0.9, 0.5, 0.2]
     end
@@ -605,14 +605,14 @@ defmodule OllamaChat.MemoryTest do
     test "respects limit option" do
       for i <- 1..10, do: create_memory!(%{content: "memory #{i}"})
 
-      results = Memory.retrieve_relevant(limit: 3)
+      {:ok, results} = Memory.retrieve_relevant(limit: 3)
       assert length(results) == 3
     end
 
     test "defaults to limit of 10" do
       for i <- 1..15, do: create_memory!(%{content: "memory #{i}"})
 
-      results = Memory.retrieve_relevant()
+      {:ok, results} = Memory.retrieve_relevant()
       assert length(results) == 10
     end
 
@@ -620,7 +620,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{content: "a fact", memory_type: "fact"})
       create_memory!(%{content: "a pref", memory_type: "preference"})
 
-      results = Memory.retrieve_relevant(memory_type: "fact")
+      {:ok, results} = Memory.retrieve_relevant(memory_type: "fact")
       assert length(results) == 1
       assert hd(results).memory_type == "fact"
     end
@@ -629,13 +629,13 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{content: "low", importance: 0.2})
       create_memory!(%{content: "high", importance: 0.8})
 
-      results = Memory.retrieve_relevant(min_importance: 0.5)
+      {:ok, results} = Memory.retrieve_relevant(min_importance: 0.5)
       assert length(results) == 1
       assert hd(results).importance == 0.8
     end
 
     test "returns empty list when no memories" do
-      assert Memory.retrieve_relevant() == []
+      assert {:ok, []} = Memory.retrieve_relevant()
     end
 
     test "considers last_accessed_at in ordering for same importance" do
@@ -657,7 +657,7 @@ defmodule OllamaChat.MemoryTest do
         set: [last_accessed_at: new_time, access_count: 1]
       )
 
-      results = Memory.retrieve_relevant()
+      {:ok, results} = Memory.retrieve_relevant()
       contents = Enum.map(results, & &1.content)
 
       # e2 was accessed more recently, so it should come first among same-importance entries
@@ -763,7 +763,7 @@ defmodule OllamaChat.MemoryTest do
 
   describe "stats/0" do
     test "returns correct structure" do
-      stats = Memory.stats()
+      {:ok, stats} = Memory.stats()
 
       assert is_map(stats)
       assert Map.has_key?(stats, :total)
@@ -773,7 +773,7 @@ defmodule OllamaChat.MemoryTest do
     end
 
     test "returns zeroes for empty database" do
-      stats = Memory.stats()
+      {:ok, stats} = Memory.stats()
 
       assert stats.total == 0
       assert stats.by_type == %{}
@@ -787,7 +787,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{memory_type: "preference", content: "pref 1"})
       create_memory!(%{memory_type: "episodic", content: "ep 1"})
 
-      stats = Memory.stats()
+      {:ok, stats} = Memory.stats()
 
       assert stats.total == 4
       assert stats.by_type["fact"] == 2
@@ -801,7 +801,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{source: "llm_explicit", content: "llm 2"})
       create_memory!(%{source: "user_manual", content: "manual 1"})
 
-      stats = Memory.stats()
+      {:ok, stats} = Memory.stats()
 
       assert stats.by_source["llm_explicit"] == 2
       assert stats.by_source["user_manual"] == 1
@@ -812,7 +812,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{importance: 0.2, content: "low"})
       create_memory!(%{importance: 0.8, content: "high"})
 
-      stats = Memory.stats()
+      {:ok, stats} = Memory.stats()
 
       assert_in_delta stats.average_importance, 0.5, 0.01
     end
@@ -822,7 +822,7 @@ defmodule OllamaChat.MemoryTest do
       create_memory!(%{importance: 0.3, content: "b"})
       create_memory!(%{importance: 0.7, content: "c"})
 
-      stats = Memory.stats()
+      {:ok, stats} = Memory.stats()
 
       # (0.3 + 0.3 + 0.7) / 3 = 0.4333... -> 0.43
       assert_in_delta stats.average_importance, 0.43, 0.01
@@ -859,41 +859,40 @@ defmodule OllamaChat.MemoryTest do
                })
     end
 
-    test "get_memory/1 returns nil" do
-      assert Memory.get_memory(Ecto.UUID.generate()) == nil
+    test "get_memory/1 returns {:error, :memory_disabled}" do
+      assert {:error, :memory_disabled} = Memory.get_memory(Ecto.UUID.generate())
     end
 
-    test "list_memories/0 returns empty list" do
-      assert Memory.list_memories() == []
+    test "list_memories/0 returns {:error, :memory_disabled}" do
+      assert {:error, :memory_disabled} = Memory.list_memories()
     end
 
-    test "count_memories/0 returns 0" do
-      assert Memory.count_memories() == 0
+    test "count_memories/0 returns {:error, :memory_disabled}" do
+      assert {:error, :memory_disabled} = Memory.count_memories()
     end
 
-    test "search_by_text/1 returns empty list" do
-      assert Memory.search_by_text("anything") == []
+    test "search_by_text/1 returns {:error, :memory_disabled}" do
+      assert {:error, :memory_disabled} = Memory.search_by_text("anything")
     end
 
-    test "retrieve_relevant/0 returns empty list" do
-      assert Memory.retrieve_relevant() == []
+    test "retrieve_relevant/0 returns {:error, :memory_disabled}" do
+      assert {:error, :memory_disabled} = Memory.retrieve_relevant()
     end
 
-    test "stats/0 returns empty stats" do
-      assert Memory.stats() == %{
-               total: 0,
-               by_type: %{},
-               by_source: %{},
-               average_importance: 0.0
-             }
+    test "stats/0 returns {:error, :memory_disabled}" do
+      assert {:error, :memory_disabled} = Memory.stats()
     end
 
     test "delete_all_memories/0 returns {:error, :memory_disabled}" do
       assert {:error, :memory_disabled} = Memory.delete_all_memories()
     end
 
-    test "touch_memories/1 returns {0, nil}" do
-      assert Memory.touch_memories([Ecto.UUID.generate()]) == {0, nil}
+    test "touch_memories/1 returns {:error, :memory_disabled}" do
+      assert {:error, :memory_disabled} = Memory.touch_memories([Ecto.UUID.generate()])
+    end
+
+    test "delete_memory_by_id/1 returns {:error, :memory_disabled} not {:error, :not_found}" do
+      assert {:error, :memory_disabled} = Memory.delete_memory_by_id(Ecto.UUID.generate())
     end
 
     test "update_memory/2 returns {:error, :memory_disabled}" do
@@ -947,6 +946,89 @@ defmodule OllamaChat.MemoryTest do
 
     test "available?/0 returns true when database is connected" do
       assert Memory.available?()
+    end
+  end
+
+  describe "ok-tuple API contract — query functions return {:ok, _} on success" do
+    test "get_memory/1 returns {:ok, entry} when found" do
+      {:ok, entry} = Memory.create_memory(valid_memory_attrs())
+      assert {:ok, %Entry{id: id}} = Memory.get_memory(entry.id)
+      assert id == entry.id
+    end
+
+    test "get_memory/1 returns {:ok, nil} when not found" do
+      assert {:ok, nil} = Memory.get_memory(Ecto.UUID.generate())
+    end
+
+    test "list_memories/0 returns {:ok, list}" do
+      {:ok, _} = Memory.create_memory(valid_memory_attrs())
+      assert {:ok, memories} = Memory.list_memories()
+      assert is_list(memories)
+      assert memories != []
+    end
+
+    test "list_memories/0 returns {:ok, []} when empty" do
+      assert {:ok, []} = Memory.list_memories()
+    end
+
+    test "count_memories/0 returns {:ok, integer}" do
+      {:ok, _} = Memory.create_memory(valid_memory_attrs())
+      {:ok, _} = Memory.create_memory(valid_memory_attrs(%{content: "Second memory"}))
+      assert {:ok, count} = Memory.count_memories()
+      assert count == 2
+    end
+
+    test "count_memories/0 returns {:ok, 0} when empty" do
+      assert {:ok, 0} = Memory.count_memories()
+    end
+
+    test "search_by_text/1 returns {:ok, list}" do
+      {:ok, _} = Memory.create_memory(valid_memory_attrs(%{content: "Elixir is great"}))
+      assert {:ok, results} = Memory.search_by_text("Elixir")
+      assert is_list(results)
+      assert [_] = results
+    end
+
+    test "search_by_text/1 returns {:ok, []} for no matches" do
+      assert {:ok, []} = Memory.search_by_text("nonexistent_xyz_789")
+    end
+
+    test "retrieve_relevant/0 returns {:ok, list}" do
+      {:ok, _} = Memory.create_memory(valid_memory_attrs(%{importance: 0.9}))
+      assert {:ok, memories} = Memory.retrieve_relevant()
+      assert is_list(memories)
+      assert memories != []
+    end
+
+    test "retrieve_relevant/0 returns {:ok, []} when empty" do
+      assert {:ok, []} = Memory.retrieve_relevant()
+    end
+
+    test "stats/0 returns {:ok, stats_map}" do
+      {:ok, _} = Memory.create_memory(valid_memory_attrs())
+      assert {:ok, stats} = Memory.stats()
+      assert is_map(stats)
+      assert stats.total == 1
+      assert is_map(stats.by_type)
+      assert is_map(stats.by_source)
+      assert is_float(stats.average_importance)
+    end
+
+    test "stats/0 returns {:ok, empty_stats} when no memories" do
+      assert {:ok, stats} = Memory.stats()
+      assert stats.total == 0
+      assert stats.by_type == %{}
+      assert stats.by_source == %{}
+      assert stats.average_importance == 0.0
+    end
+
+    test "touch_memories/1 returns {:ok, {count, nil}}" do
+      {:ok, entry} = Memory.create_memory(valid_memory_attrs())
+      assert {:ok, {1, nil}} = Memory.touch_memories([entry.id])
+    end
+
+    test "touch_memories/1 with empty list returns {:ok, {0, nil}}" do
+      assert {:ok, {0, nil}} = Memory.touch_memories([])
     end
   end
 end

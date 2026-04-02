@@ -1,5 +1,15 @@
 This is a web application written using the Phoenix web framework.
 
+## Development workflow principles
+
+These are **non-negotiable** and apply to all work in this project:
+
+1. **NEVER swallow errors.** Every error must be visible to the caller. Do not catch exceptions and return default values silently. If a function can fail, its return type must communicate that failure (e.g., `{:ok, result} | {:error, reason}`). Logging alone is not sufficient — callers must be able to distinguish success from failure. When wrapping unreliable operations, prefer `{:ok, data}` / `{:error, reason}` tuples over silently returning empty defaults.
+
+2. **Test-driven development (TDD).** Write failing tests first, then implement code to make them pass. Do not write implementation code before tests. The cycle is: Red (write a failing test) → Green (write minimal code to pass) → Refactor. When adding new modules or features, create the test file first.
+
+3. **Commit and push on completion.** After each significant unit of work compiles cleanly, passes tests, and passes quality checks (`mix precommit` or at minimum `mix compile --warnings-as-errors && mix format --check-formatted && mix credo --min-priority high && mix test`), commit with a descriptive message and push immediately. Do not accumulate large uncommitted changesets.
+
 ## Project guidelines
 
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues
@@ -95,6 +105,7 @@ custom classes must fully style the input
 
 ## Test guidelines
 
+- **Follow TDD**: write failing tests before implementation code (Red → Green → Refactor)
 - **Always use `start_supervised!/1`** to start processes in tests as it guarantees cleanup between tests
 - **Avoid** `Process.sleep/1` and `Process.alive?/1` in tests
   - Instead of sleeping to wait for a process to finish, **always** use `Process.monitor/1` and assert on the DOWN message:

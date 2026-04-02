@@ -19,16 +19,18 @@ defmodule OllamaChat.Memory do
   - `:llm_explicit` — Explicitly saved by the LLM via tool call
   - `:user_manual` — Manually created by the user
 
-  ## Resilience
+  ## Error Handling
 
-  All database operations gracefully handle unavailability:
-  - When `memory_enabled` config is `false`, mutations return `{:error, :memory_disabled}`
-    and queries return sensible defaults (empty lists, zero counts).
-  - When the database is unreachable, mutations return `{:error, :database_unavailable}`
-    and queries return the same defaults. Postgrex reconnects automatically in the
-    background, so recovery is seamless.
-  - The bang functions (`create_memory!/1`, `get_memory!/1`) are NOT wrapped — they
-    raise on failure as expected, for use in scripts, seeds, and tests.
+  All database operations return explicit `{:ok, result}` or `{:error, reason}` tuples.
+  Errors are never swallowed — callers can always distinguish success from failure:
+
+  - `{:error, :memory_disabled}` — memory system is turned off via config
+  - `{:error, :database_unavailable}` — database connection failed
+  - `{:error, %Ecto.Changeset{}}` — validation failure
+  - `{:error, :not_found}` — entry not found
+
+  The bang functions (`create_memory!/1`, `get_memory!/1`) are NOT wrapped — they
+  raise on failure as expected, for use in scripts, seeds, and tests.
   """
 
   import Ecto.Query, warn: false
@@ -59,6 +61,9 @@ defmodule OllamaChat.Memory do
   @doc """
   Creates a new memory entry.
 
+  Returns `{:ok, entry}` on success, `{:error, changeset}` on validation failure,
+  or `{:error, :memory_disabled}` / `{:error, :database_unavailable}` when unavailable.
+
   ## Examples
 
       iex> create_memory(%{content: "User prefers Elixir", memory_type: "preference", source: "llm_explicit"})
@@ -68,7 +73,7 @@ defmodule OllamaChat.Memory do
       {:error, %Ecto.Changeset{}}
   """
   def create_memory(attrs) when is_map(attrs) do
-    mutate_or_error(fn ->
+    with_db(fn ->
       %Entry{}
       |> Entry.changeset(attrs)
       |> Repo.insert()
@@ -82,6 +87,8 @@ defmodule OllamaChat.Memory do
 
   @doc """
   Creates a memory entry, raising on failure.
+
+  Not wrapped with resilience — raises on database errors. Use in scripts/seeds/tests.
   """
   def create_memory!(attrs) when is_map(attrs) do
     %Entry{}
@@ -94,14 +101,17 @@ defmodule OllamaChat.Memory do
   @doc """
   Gets a single memory entry by ID.
 
-  Returns `nil` if the entry does not exist.
+  Returns `{:ok, entry}` if found, `{:ok, nil}` if not found,
+  or `{:error, reason}` when unavailable.
   """
   def get_memory(id) when is_binary(id) do
-    query_or_default(nil, fn -> Repo.get(Entry, id) end)
+    with_db(fn -> {:ok, Repo.get(Entry, id)} end)
   end
 
   @doc """
   Gets a single memory entry by ID, raising if not found.
+
+  Not wrapped with resilience — raises on database errors. Use in scripts/seeds/tests.
   """
   def get_memory!(id) when is_binary(id) do
     Repo.get!(Entry, id)
@@ -109,6 +119,8 @@ defmodule OllamaChat.Memory do
 
   @doc """
   Lists all memory entries, ordered by importance (descending) then recency.
+
+  Returns `{:ok, [entries]}` on success or `{:error, reason}` when unavailable.
 
   ## Options
 
@@ -120,29 +132,37 @@ defmodule OllamaChat.Memory do
   - `:min_importance` — Minimum importance threshold (0.0–1.0)
   """
   def list_memories(opts \\ []) do
-    query_or_default([], fn ->
+    with_db(fn ->
       limit = Keyword.get(opts, :limit, 50)
       offset = Keyword.get(opts, :offset, 0)
 
-      Entry
-      |> apply_filters(opts)
-      |> order_by([m], desc: m.importance, desc: m.updated_at)
-      |> limit(^limit)
-      |> offset(^offset)
-      |> Repo.all()
+      result =
+        Entry
+        |> apply_filters(opts)
+        |> order_by([m], desc: m.importance, desc: m.updated_at)
+        |> limit(^limit)
+        |> offset(^offset)
+        |> Repo.all()
+
+      {:ok, result}
     end)
   end
 
   @doc """
   Returns the total count of memory entries, with optional filters.
 
+  Returns `{:ok, count}` on success or `{:error, reason}` when unavailable.
+
   Accepts the same filter options as `list_memories/1`.
   """
   def count_memories(opts \\ []) do
-    query_or_default(0, fn ->
-      Entry
-      |> apply_filters(opts)
-      |> Repo.aggregate(:count)
+    with_db(fn ->
+      result =
+        Entry
+        |> apply_filters(opts)
+        |> Repo.aggregate(:count)
+
+      {:ok, result}
     end)
   end
 
@@ -151,13 +171,16 @@ defmodule OllamaChat.Memory do
   @doc """
   Updates a memory entry's content, type, category, importance, or metadata.
 
+  Returns `{:ok, entry}` on success, `{:error, changeset}` on validation failure,
+  or `{:error, reason}` when unavailable.
+
   ## Examples
 
       iex> update_memory(entry, %{content: "Updated fact", importance: 0.9})
       {:ok, %Entry{}}
   """
   def update_memory(%Entry{} = entry, attrs) when is_map(attrs) do
-    mutate_or_error(fn ->
+    with_db(fn ->
       entry
       |> Entry.update_changeset(attrs)
       |> Repo.update()
@@ -171,9 +194,10 @@ defmodule OllamaChat.Memory do
   Records that a memory was accessed during retrieval.
 
   Increments `access_count` and updates `last_accessed_at`.
+  Returns `{:ok, entry}` on success or `{:error, reason}` when unavailable.
   """
   def touch_memory(%Entry{} = entry) do
-    mutate_or_error(fn ->
+    with_db(fn ->
       entry
       |> Entry.access_changeset()
       |> Repo.update()
@@ -184,23 +208,28 @@ defmodule OllamaChat.Memory do
   Batch-touch multiple memories (used after retrieval).
 
   More efficient than touching one at a time — performs a single UPDATE query.
+  Returns `{:ok, {count, nil}}` on success or `{:error, reason}` when unavailable.
   """
-  def touch_memories(memory_ids) when is_list(memory_ids) and memory_ids != [] do
-    query_or_default({0, nil}, fn ->
+  def touch_memories([]), do: {:ok, {0, nil}}
+
+  def touch_memories(memory_ids) when is_list(memory_ids) do
+    with_db(fn ->
       now = DateTime.utc_now() |> DateTime.truncate(:second)
 
-      Entry
-      |> where([m], m.id in ^memory_ids)
-      |> Repo.update_all(inc: [access_count: 1], set: [last_accessed_at: now])
+      result =
+        Entry
+        |> where([m], m.id in ^memory_ids)
+        |> Repo.update_all(inc: [access_count: 1], set: [last_accessed_at: now])
+
+      {:ok, result}
     end)
   end
-
-  def touch_memories([]), do: {0, nil}
 
   @doc """
   Increases importance of a memory (reinforcement through repeated mention).
 
   Importance is clamped to 1.0.
+  Returns `{:ok, entry}` on success or `{:error, reason}` when unavailable.
   """
   def reinforce_memory(%Entry{} = entry, boost \\ 0.1) do
     new_importance = min(entry.importance + boost, 1.0)
@@ -211,9 +240,11 @@ defmodule OllamaChat.Memory do
 
   @doc """
   Deletes a memory entry.
+
+  Returns `{:ok, entry}` on success or `{:error, reason}` when unavailable.
   """
   def delete_memory(%Entry{} = entry) do
-    mutate_or_error(fn ->
+    with_db(fn ->
       Repo.delete(entry)
       |> tap_ok(fn entry ->
         Logger.info("Memory deleted: #{entry.id} — #{truncate(entry.content)}")
@@ -222,20 +253,28 @@ defmodule OllamaChat.Memory do
   end
 
   @doc """
-  Deletes a memory entry by ID. Returns `{:ok, entry}` or `{:error, :not_found}`.
+  Deletes a memory entry by ID.
+
+  Returns `{:ok, entry}` on success, `{:error, :not_found}` if not found,
+  or `{:error, :memory_disabled}` / `{:error, :database_unavailable}` when unavailable.
   """
   def delete_memory_by_id(id) when is_binary(id) do
-    case get_memory(id) do
-      nil -> {:error, :not_found}
-      entry -> delete_memory(entry)
+    with {:ok, entry} <- get_memory(id) do
+      if entry do
+        delete_memory(entry)
+      else
+        {:error, :not_found}
+      end
     end
   end
 
   @doc """
   Deletes all memories. Use with caution.
+
+  Returns `{:ok, count}` on success or `{:error, reason}` when unavailable.
   """
   def delete_all_memories do
-    mutate_or_error(fn ->
+    with_db(fn ->
       {count, _} = Repo.delete_all(Entry)
       Logger.info("Deleted all #{count} memories")
       {:ok, count}
@@ -250,22 +289,27 @@ defmodule OllamaChat.Memory do
   This is the keyword-based fallback search used when embeddings are not
   available. For semantic search, see Phase 2 (embedding pipeline).
 
+  Returns `{:ok, [entries]}` on success or `{:error, reason}` when unavailable.
+
   ## Options
 
   Accepts the same filter options as `list_memories/1` plus:
   - `:limit` — Maximum results (default: 10)
   """
   def search_by_text(query_text, opts \\ []) when is_binary(query_text) do
-    query_or_default([], fn ->
+    with_db(fn ->
       limit = Keyword.get(opts, :limit, 10)
       pattern = "%#{sanitize_like(query_text)}%"
 
-      Entry
-      |> where([m], ilike(m.content, ^pattern))
-      |> apply_filters(opts)
-      |> order_by([m], desc: m.importance, desc: m.updated_at)
-      |> limit(^limit)
-      |> Repo.all()
+      result =
+        Entry
+        |> where([m], ilike(m.content, ^pattern))
+        |> apply_filters(opts)
+        |> order_by([m], desc: m.importance, desc: m.updated_at)
+        |> limit(^limit)
+        |> Repo.all()
+
+      {:ok, result}
     end)
   end
 
@@ -275,6 +319,8 @@ defmodule OllamaChat.Memory do
   In Phase 1, this uses importance + recency ranking.
   In Phase 2+, this will use semantic similarity via pgvector embeddings.
 
+  Returns `{:ok, [entries]}` on success or `{:error, reason}` when unavailable.
+
   ## Options
 
   - `:limit` — Maximum memories to retrieve (default: 10)
@@ -282,18 +328,21 @@ defmodule OllamaChat.Memory do
   - `:min_importance` — Minimum importance threshold
   """
   def retrieve_relevant(opts \\ []) do
-    query_or_default([], fn ->
+    with_db(fn ->
       limit = Keyword.get(opts, :limit, 10)
 
-      Entry
-      |> apply_filters(opts)
-      |> order_by([m],
-        desc: m.importance,
-        desc: m.last_accessed_at,
-        desc: m.updated_at
-      )
-      |> limit(^limit)
-      |> Repo.all()
+      result =
+        Entry
+        |> apply_filters(opts)
+        |> order_by([m],
+          desc: m.importance,
+          desc: m.last_accessed_at,
+          desc: m.updated_at
+        )
+        |> limit(^limit)
+        |> Repo.all()
+
+      {:ok, result}
     end)
   end
 
@@ -303,6 +352,8 @@ defmodule OllamaChat.Memory do
   Formats a list of memory entries for injection into the system prompt.
 
   Returns `nil` if there are no memories to inject.
+
+  This function does not touch the database — it formats already-retrieved entries.
   """
   def format_for_prompt([]), do: nil
 
@@ -327,11 +378,11 @@ defmodule OllamaChat.Memory do
 
   @doc """
   Returns summary statistics about stored memories.
-  """
-  @empty_stats %{total: 0, by_type: %{}, by_source: %{}, average_importance: 0.0}
 
+  Returns `{:ok, stats_map}` on success or `{:error, reason}` when unavailable.
+  """
   def stats do
-    query_or_default(@empty_stats, fn ->
+    with_db(fn ->
       total = Repo.aggregate(Entry, :count)
 
       type_counts =
@@ -355,20 +406,22 @@ defmodule OllamaChat.Memory do
           avg when is_float(avg) -> Float.round(avg, 2)
         end
 
-      %{
-        total: total,
-        by_type: type_counts,
-        by_source: source_counts,
-        average_importance: avg_importance
-      }
+      {:ok,
+       %{
+         total: total,
+         by_type: type_counts,
+         by_source: source_counts,
+         average_importance: avg_importance
+       }}
     end)
   end
 
   # ── Private Helpers ─────────────────────────────────────────────────────────
 
-  # Wraps a database mutation that returns {:ok, _} | {:error, _}.
-  # Returns {:error, :memory_disabled} or {:error, :database_unavailable} on failure.
-  defp mutate_or_error(fun) when is_function(fun, 0) do
+  # Unified wrapper for all database operations. The inner function must return
+  # an {:ok, _} | {:error, _} tuple. This wrapper NEVER swallows errors —
+  # callers always know whether the operation succeeded or failed, and why.
+  defp with_db(fun) when is_function(fun, 0) do
     if enabled?() do
       fun.()
     else
@@ -376,22 +429,8 @@ defmodule OllamaChat.Memory do
     end
   rescue
     e in [DBConnection.ConnectionError] ->
-      log_db_unavailable(e)
+      Logger.error("Memory database unavailable: #{Exception.message(e)}")
       {:error, :database_unavailable}
-  end
-
-  # Wraps a database query that returns data directly (list, integer, map, etc.).
-  # Returns the default value on failure instead of crashing.
-  defp query_or_default(default, fun) when is_function(fun, 0) do
-    if enabled?() do
-      fun.()
-    else
-      default
-    end
-  rescue
-    e in [DBConnection.ConnectionError] ->
-      log_db_unavailable(e)
-      default
   end
 
   defp database_connected? do
@@ -401,10 +440,6 @@ defmodule OllamaChat.Memory do
     end
   rescue
     _ -> false
-  end
-
-  defp log_db_unavailable(error) do
-    Logger.warning("Memory database unavailable: #{Exception.message(error)}")
   end
 
   defp apply_filters(query, opts) do
