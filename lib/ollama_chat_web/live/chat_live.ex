@@ -82,6 +82,10 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:mcp_server_configs, [])
       |> assign(:editing_mcp_server, nil)
       |> assign(:mcp_form_error, nil)
+      |> assign(:dir_browser_open, false)
+      |> assign(:dir_browser_path, "")
+      |> assign(:dir_browser_entries, [])
+      |> assign(:dir_browser_error, nil)
       |> assign(:memory_list, [])
       |> assign(:memory_search, "")
       |> assign(:memory_filter_type, "")
@@ -738,7 +742,8 @@ defmodule OllamaChatWeb.ChatLive do
     {:noreply,
      socket
      |> assign(:editing_mcp_server, new_server)
-     |> assign(:mcp_form_error, nil)}
+     |> assign(:mcp_form_error, nil)
+     |> assign(:dir_browser_open, false)}
   end
 
   @impl true
@@ -765,7 +770,8 @@ defmodule OllamaChatWeb.ChatLive do
         {:noreply,
          socket
          |> assign(:editing_mcp_server, form_data)
-         |> assign(:mcp_form_error, nil)}
+         |> assign(:mcp_form_error, nil)
+         |> assign(:dir_browser_open, false)}
     end
   end
 
@@ -774,7 +780,50 @@ defmodule OllamaChatWeb.ChatLive do
     {:noreply,
      socket
      |> assign(:editing_mcp_server, nil)
-     |> assign(:mcp_form_error, nil)}
+     |> assign(:mcp_form_error, nil)
+     |> assign(:dir_browser_open, false)}
+  end
+
+  @impl true
+  def handle_event("open_dir_browser", _params, socket) do
+    start_path =
+      case socket.assigns.editing_mcp_server do
+        %{"root_path" => path} when is_binary(path) and path != "" ->
+          if File.dir?(path), do: path, else: System.user_home!()
+
+        _ ->
+          System.user_home!()
+      end
+
+    {:noreply, open_dir_browser_at(socket, start_path)}
+  end
+
+  @impl true
+  def handle_event("dir_browser_navigate", %{"path" => path}, socket) do
+    {:noreply, open_dir_browser_at(socket, path)}
+  end
+
+  @impl true
+  def handle_event("dir_browser_navigate_parent", _params, socket) do
+    current = socket.assigns.dir_browser_path
+    parent = if current == "/", do: "/", else: Path.dirname(current)
+    {:noreply, open_dir_browser_at(socket, parent)}
+  end
+
+  @impl true
+  def handle_event("dir_browser_select", _params, socket) do
+    selected = socket.assigns.dir_browser_path
+    updated_server = Map.put(socket.assigns.editing_mcp_server, "root_path", selected)
+
+    {:noreply,
+     socket
+     |> assign(:editing_mcp_server, updated_server)
+     |> assign(:dir_browser_open, false)}
+  end
+
+  @impl true
+  def handle_event("dir_browser_cancel", _params, socket) do
+    {:noreply, assign(socket, :dir_browser_open, false)}
   end
 
   @impl true
@@ -808,54 +857,71 @@ defmodule OllamaChatWeb.ChatLive do
         end
     }
 
-    # Determine if this is an add or update by checking the actual MCPClient state
-    # (not local assigns, which may be stale if MCP was disabled when settings opened)
-    current_configs = MCPClient.list_server_configs()
-    existing = Enum.find(current_configs, fn s -> s.name == config.name end)
+    # Validate root_path if provided
+    root_path_error =
+      case config.root_path do
+        nil ->
+          nil
 
-    result =
-      if existing do
-        MCPClient.update_server(config.name, config)
-      else
-        MCPClient.add_server(config)
+        path ->
+          if File.dir?(path),
+            do: nil,
+            else: "Workspace Root path does not exist or is not a directory: #{path}"
       end
 
-    case result do
-      :ok ->
-        configs = MCPClient.list_server_configs()
-        server_status = MCPClient.server_info()
+    if root_path_error do
+      {:noreply, assign(socket, :mcp_form_error, root_path_error)}
+    else
+      # Determine if this is an add or update by checking the actual MCPClient state
+      # (not local assigns, which may be stale if MCP was disabled when settings opened)
+      current_configs = MCPClient.list_server_configs()
+      existing = Enum.find(current_configs, fn s -> s.name == config.name end)
 
-        # Check command path and show appropriate toast
-        command = String.trim(params["command"])
+      result =
+        if existing do
+          MCPClient.update_server(config.name, config)
+        else
+          MCPClient.add_server(config)
+        end
 
-        toast_socket =
-          case OllamaChat.MCPConfig.validate_command_path(command) do
-            :ok ->
-              show_toast(socket, "Server saved successfully")
+      case result do
+        :ok ->
+          configs = MCPClient.list_server_configs()
+          server_status = MCPClient.server_info()
 
-            {:warning, warning} ->
-              show_toast(socket, "Server saved — #{warning}", :warning)
+          # Check command path and show appropriate toast
+          command = String.trim(params["command"])
 
-            {:error, _} ->
-              show_toast(socket, "Server saved successfully")
-          end
+          toast_socket =
+            case OllamaChat.MCPConfig.validate_command_path(command) do
+              :ok ->
+                show_toast(socket, "Server saved successfully")
 
-        {:noreply,
-         toast_socket
-         |> assign(:mcp_server_configs, configs)
-         |> assign(:mcp_server_status, server_status)
-         |> assign(:mcp_tools, fetch_mcp_tools())
-         |> assign(:editing_mcp_server, nil)
-         |> assign(:mcp_form_error, nil)}
+              {:warning, warning} ->
+                show_toast(socket, "Server saved — #{warning}", :warning)
 
-      {:error, {:validation, errors}} ->
-        {:noreply, assign(socket, :mcp_form_error, Enum.join(errors, ". "))}
+              {:error, _} ->
+                show_toast(socket, "Server saved successfully")
+            end
 
-      {:error, message} when is_binary(message) ->
-        {:noreply, assign(socket, :mcp_form_error, message)}
+          {:noreply,
+           toast_socket
+           |> assign(:mcp_server_configs, configs)
+           |> assign(:mcp_server_status, server_status)
+           |> assign(:mcp_tools, fetch_mcp_tools())
+           |> assign(:editing_mcp_server, nil)
+           |> assign(:mcp_form_error, nil)
+           |> assign(:dir_browser_open, false)}
 
-      {:error, reason} ->
-        {:noreply, assign(socket, :mcp_form_error, inspect(reason))}
+        {:error, {:validation, errors}} ->
+          {:noreply, assign(socket, :mcp_form_error, Enum.join(errors, ". "))}
+
+        {:error, message} when is_binary(message) ->
+          {:noreply, assign(socket, :mcp_form_error, message)}
+
+        {:error, reason} ->
+          {:noreply, assign(socket, :mcp_form_error, inspect(reason))}
+      end
     end
   end
 
@@ -2839,14 +2905,98 @@ defmodule OllamaChatWeb.ChatLive do
                                   <label class="block text-xs font-medium text-gray-300 mb-1">
                                     Workspace Root
                                   </label>
-                                  <input
-                                    type="text"
-                                    name="root_path"
-                                    value={@editing_mcp_server["root_path"] || ""}
-                                    placeholder="/Users/you/projects/myapp"
-                                    class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
-                                    id="mcp-server-root-path"
-                                  />
+                                  <div class="flex gap-2">
+                                    <input
+                                      type="text"
+                                      name="root_path"
+                                      value={@editing_mcp_server["root_path"] || ""}
+                                      placeholder="/Users/you/projects/myapp"
+                                      class="flex-1 bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
+                                      id="mcp-server-root-path"
+                                    />
+                                    <button
+                                      type="button"
+                                      phx-click="open_dir_browser"
+                                      class="px-3 py-2 text-sm text-gray-300 bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5"
+                                      id="mcp-browse-dir"
+                                      title="Browse server filesystem"
+                                    >
+                                      <.icon name="hero-folder-open" class="w-4 h-4" /> Browse…
+                                    </button>
+                                  </div>
+                                  <%= if @dir_browser_open do %>
+                                    <div
+                                      class="mt-2 border border-slate-600 rounded-lg overflow-hidden"
+                                      id="dir-browser-panel"
+                                    >
+                                      <%!-- Header: up arrow + current path --%>
+                                      <div class="flex items-center gap-2 px-3 py-2 bg-slate-800 border-b border-slate-600">
+                                        <button
+                                          type="button"
+                                          phx-click="dir_browser_navigate_parent"
+                                          title="Go to parent directory"
+                                          class="text-gray-400 hover:text-white transition-colors flex-shrink-0"
+                                          id="dir-browser-up"
+                                        >
+                                          <.icon name="hero-arrow-up" class="w-4 h-4" />
+                                        </button>
+                                        <span
+                                          class="text-xs font-mono text-gray-300 truncate flex-1"
+                                          title={@dir_browser_path}
+                                        >
+                                          {@dir_browser_path}
+                                        </span>
+                                      </div>
+                                      <%!-- Directory list --%>
+                                      <div class="max-h-44 overflow-y-auto divide-y divide-slate-700/50 bg-slate-900">
+                                        <%= if @dir_browser_error do %>
+                                          <p class="px-3 py-3 text-xs text-red-400">
+                                            {@dir_browser_error}
+                                          </p>
+                                        <% else %>
+                                          <%= if @dir_browser_entries == [] do %>
+                                            <p class="px-3 py-3 text-xs text-gray-500 italic">
+                                              No subdirectories
+                                            </p>
+                                          <% else %>
+                                            <%= for entry <- @dir_browser_entries do %>
+                                              <button
+                                                type="button"
+                                                phx-click="dir_browser_navigate"
+                                                phx-value-path={entry.path}
+                                                class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-slate-700 hover:text-white transition-colors text-left"
+                                              >
+                                                <.icon
+                                                  name="hero-folder"
+                                                  class="w-4 h-4 text-blue-400 flex-shrink-0"
+                                                />
+                                                <span class="font-mono truncate">{entry.name}</span>
+                                              </button>
+                                            <% end %>
+                                          <% end %>
+                                        <% end %>
+                                      </div>
+                                      <%!-- Footer: select + cancel --%>
+                                      <div class="flex items-center justify-between px-3 py-2 bg-slate-800 border-t border-slate-600">
+                                        <button
+                                          type="button"
+                                          phx-click="dir_browser_select"
+                                          class="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+                                          id="dir-browser-select"
+                                        >
+                                          Select This Directory
+                                        </button>
+                                        <button
+                                          type="button"
+                                          phx-click="dir_browser_cancel"
+                                          class="px-3 py-1.5 text-xs text-gray-400 hover:text-white transition-colors"
+                                          id="dir-browser-cancel"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  <% end %>
                                   <p class="text-xs text-gray-500 mt-1">
                                     Optional. Restricts all file path arguments to this directory and its children.
                                     Leave empty to allow any path the MCP server permits.
@@ -4237,6 +4387,39 @@ defmodule OllamaChatWeb.ChatLive do
 
   defp generate_id do
     "msg-#{System.unique_integer([:positive, :monotonic])}"
+  end
+
+  # Directory browser helpers
+
+  defp open_dir_browser_at(socket, path) do
+    case list_directories(path) do
+      {:error, reason} ->
+        socket
+        |> assign(:dir_browser_open, true)
+        |> assign(:dir_browser_path, path)
+        |> assign(:dir_browser_entries, [])
+        |> assign(:dir_browser_error, reason)
+
+      entries ->
+        socket
+        |> assign(:dir_browser_open, true)
+        |> assign(:dir_browser_path, path)
+        |> assign(:dir_browser_entries, entries)
+        |> assign(:dir_browser_error, nil)
+    end
+  end
+
+  defp list_directories(path) do
+    case File.ls(path) do
+      {:ok, names} ->
+        names
+        |> Enum.sort()
+        |> Enum.filter(fn name -> File.dir?(Path.join(path, name)) end)
+        |> Enum.map(fn name -> %{name: name, path: Path.join(path, name)} end)
+
+      {:error, reason} ->
+        {:error, "Cannot read #{path}: #{:file.format_error(reason)}"}
+    end
   end
 
   defp start_new_conversation(socket) do

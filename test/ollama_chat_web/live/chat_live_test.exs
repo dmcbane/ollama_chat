@@ -1160,6 +1160,232 @@ defmodule OllamaChatWeb.ChatLiveTest do
     end
   end
 
+  describe "workspace root directory browser" do
+    # MCP must be enabled so the form and browser panel render in HTML.
+    setup do
+      original = Application.get_env(:ollama_chat, :mcp_enabled, false)
+      Application.put_env(:ollama_chat, :mcp_enabled, true)
+      on_exit(fn -> Application.put_env(:ollama_chat, :mcp_enabled, original) end)
+      :ok
+    end
+
+    test "open_dir_browser opens the browser panel", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+      render_hook(view, "add_mcp_server", %{})
+      render_hook(view, "open_dir_browser", %{})
+
+      html = render(view)
+      assert html =~ ~s(id="dir-browser-panel")
+      assert html =~ System.user_home!()
+    end
+
+    test "open_dir_browser opens at existing root_path when it is a valid directory", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+      server_name = "test_browse_existing_#{System.unique_integer([:positive])}"
+
+      render_hook(view, "save_mcp_server", %{
+        "name" => server_name,
+        "display_name" => "Browse Existing",
+        "command" => "/usr/bin/false",
+        "description" => "",
+        "args" => "",
+        "enabled" => "false",
+        "requires_approval" => "false",
+        "dangerous_tools" => "",
+        "root_path" => System.tmp_dir!()
+      })
+
+      render_hook(view, "edit_mcp_server", %{"name" => server_name})
+      render_hook(view, "open_dir_browser", %{})
+
+      html = render(view)
+      assert html =~ ~s(id="dir-browser-panel")
+      assert html =~ System.tmp_dir!()
+
+      OllamaChat.MCPClient.remove_server(String.to_atom(server_name))
+    end
+
+    test "dir_browser_navigate navigates into the given path", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+      render_hook(view, "add_mcp_server", %{})
+      render_hook(view, "open_dir_browser", %{})
+      render_hook(view, "dir_browser_navigate", %{"path" => System.tmp_dir!()})
+
+      html = render(view)
+      assert html =~ ~s(id="dir-browser-panel")
+      assert html =~ System.tmp_dir!()
+    end
+
+    test "dir_browser_navigate_parent navigates to the parent directory", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+      tmp = System.tmp_dir!()
+
+      render_hook(view, "add_mcp_server", %{})
+      render_hook(view, "open_dir_browser", %{})
+      render_hook(view, "dir_browser_navigate", %{"path" => tmp})
+      render_hook(view, "dir_browser_navigate_parent", %{})
+
+      html = render(view)
+      # Browser should still be open after navigating up
+      assert html =~ ~s(id="dir-browser-panel")
+      # Current path should now be the parent, not the original tmp
+      refute html =~ ~s(title="#{tmp}")
+    end
+
+    test "dir_browser_navigate_parent stays at / when already at root", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+      render_hook(view, "add_mcp_server", %{})
+      render_hook(view, "open_dir_browser", %{})
+      render_hook(view, "dir_browser_navigate", %{"path" => "/"})
+      render_hook(view, "dir_browser_navigate_parent", %{})
+
+      html = render(view)
+      # Should not crash and browser should still be open
+      assert html =~ ~s(id="dir-browser-panel")
+    end
+
+    test "dir_browser_select updates root_path input and closes the browser", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+      tmp = System.tmp_dir!()
+
+      render_hook(view, "add_mcp_server", %{})
+      render_hook(view, "open_dir_browser", %{})
+      render_hook(view, "dir_browser_navigate", %{"path" => tmp})
+      render_hook(view, "dir_browser_select", %{})
+
+      html = render(view)
+      refute html =~ ~s(id="dir-browser-panel")
+      assert html =~ ~s(value="#{tmp}")
+    end
+
+    test "dir_browser_cancel closes the browser without changing root_path", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+      render_hook(view, "add_mcp_server", %{})
+      render_hook(view, "open_dir_browser", %{})
+      render_hook(view, "dir_browser_cancel", %{})
+
+      html = render(view)
+      refute html =~ ~s(id="dir-browser-panel")
+      # root_path input should still be empty (unchanged)
+      assert html =~ ~s(value="")
+    end
+
+    test "cancel_edit_mcp_server closes the browser", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+      render_hook(view, "add_mcp_server", %{})
+      render_hook(view, "open_dir_browser", %{})
+      render_hook(view, "cancel_edit_mcp_server", %{})
+
+      html = render(view)
+      refute html =~ ~s(id="dir-browser-panel")
+    end
+
+    test "save_mcp_server rejects a nonexistent root_path", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+      server_name = "test_rootpath_bad_#{System.unique_integer([:positive])}"
+
+      render_hook(view, "save_mcp_server", %{
+        "name" => server_name,
+        "display_name" => "Root Path Bad",
+        "command" => "/usr/bin/false",
+        "description" => "",
+        "args" => "",
+        "enabled" => "false",
+        "requires_approval" => "false",
+        "dangerous_tools" => "",
+        "root_path" => "/this/path/does/absolutely/not/exist/xyzabc"
+      })
+
+      html = render(view)
+      assert html =~ "does not exist or is not a directory"
+      # Server should NOT have been saved
+      configs = OllamaChat.MCPClient.list_server_configs()
+      refute Enum.any?(configs, fn s -> to_string(s.name) == server_name end)
+    end
+
+    test "save_mcp_server accepts an empty root_path", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      server_name = "test_rootpath_empty_#{System.unique_integer([:positive])}"
+
+      render_hook(view, "save_mcp_server", %{
+        "name" => server_name,
+        "display_name" => "Root Path Empty",
+        "command" => "/usr/bin/false",
+        "description" => "",
+        "args" => "",
+        "enabled" => "false",
+        "requires_approval" => "false",
+        "dangerous_tools" => "",
+        "root_path" => ""
+      })
+
+      configs = OllamaChat.MCPClient.list_server_configs()
+      server = Enum.find(configs, fn s -> to_string(s.name) == server_name end)
+
+      assert server != nil
+      assert server.root_path == nil
+
+      OllamaChat.MCPClient.remove_server(String.to_atom(server_name))
+    end
+
+    test "save_mcp_server accepts a valid existing directory as root_path", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      server_name = "test_rootpath_valid_#{System.unique_integer([:positive])}"
+      tmp = System.tmp_dir!()
+
+      render_hook(view, "save_mcp_server", %{
+        "name" => server_name,
+        "display_name" => "Root Path Valid",
+        "command" => "/usr/bin/false",
+        "description" => "",
+        "args" => "",
+        "enabled" => "false",
+        "requires_approval" => "false",
+        "dangerous_tools" => "",
+        "root_path" => tmp
+      })
+
+      configs = OllamaChat.MCPClient.list_server_configs()
+      server = Enum.find(configs, fn s -> to_string(s.name) == server_name end)
+
+      assert server != nil
+      assert server.root_path == tmp
+
+      OllamaChat.MCPClient.remove_server(String.to_atom(server_name))
+    end
+  end
+
   describe "settings dialog accessibility" do
     test "dialog has correct ARIA attributes", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
