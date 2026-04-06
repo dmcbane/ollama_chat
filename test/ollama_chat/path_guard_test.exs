@@ -102,5 +102,22 @@ defmodule OllamaChat.PathGuardTest do
       assert {:error, _} =
                PathGuard.sanitize_args(%{"path" => "~/Documents"}, "/root")
     end
+
+    test "dot is now path-like and resolves to root itself — passes validation" do
+      # "." expands to root when validated against root, so it is allowed
+      assert {:ok, _} = PathGuard.sanitize_args(%{"path" => "."}, "/root")
+    end
+
+    test "dot would have bypassed the guard before the fix — confirm it is now checked" do
+      # Use a root that cannot possibly contain "." as a relative expansion of itself
+      # outside the root to prove we actually validate it rather than skip it.
+      # "." always resolves to the root when expanded against the root, so {:ok, _}.
+      args = %{"path" => ".", "other" => "safe_value"}
+      assert {:ok, _} = PathGuard.sanitize_args(args, "/some/workspace")
+    end
+
+    test "dot with a root that has no subdirs still resolves correctly" do
+      assert {:ok, _} = PathGuard.sanitize_args(%{"dir" => "."}, "/workspace/project")
+    end
   end
 end

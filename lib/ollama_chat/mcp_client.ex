@@ -527,10 +527,9 @@ defmodule OllamaChat.MCPClient do
   # Private Functions
 
   defp start_mcp_server(config) do
-    Client.start_link(
-      transport: :stdio,
-      command: [config.command | config.args]
-    )
+    command_args = build_command_args(config)
+    opts = build_start_opts(config, command_args)
+    Client.start_link(opts)
   rescue
     error ->
       Logger.error("Exception starting MCP server #{config.display_name}: #{inspect(error)}")
@@ -539,6 +538,32 @@ defmodule OllamaChat.MCPClient do
     :exit, reason ->
       Logger.error("Exit starting MCP server #{config.display_name}: #{inspect(reason)}")
       {:error, reason}
+  end
+
+  # Append root_path to the server's command args when set so that MCP
+  # filesystem servers receive it as their allowed (root) directory.
+  defp build_command_args(%{root_path: nil} = config), do: config.args
+  defp build_command_args(%{root_path: ""} = config), do: config.args
+  defp build_command_args(%{root_path: root_path} = config), do: config.args ++ [root_path]
+
+  # Build ExMCP client startup options.
+  # Sets :cd to root_path so relative paths (e.g. ".") resolve to the workspace.
+  # Sets :env when the server config includes environment variables.
+  defp build_start_opts(config, command_args) do
+    [transport: :stdio, command: [config.command | command_args]]
+    |> add_cd_opt(config.root_path)
+    |> add_env_opt(config.env)
+  end
+
+  defp add_cd_opt(opts, nil), do: opts
+  defp add_cd_opt(opts, ""), do: opts
+  defp add_cd_opt(opts, root_path), do: Keyword.put(opts, :cd, Path.expand(root_path))
+
+  defp add_env_opt(opts, env) when map_size(env) == 0, do: opts
+
+  defp add_env_opt(opts, env) do
+    env_list = Enum.map(env, fn {k, v} -> {to_string(k), to_string(v)} end)
+    Keyword.put(opts, :env, env_list)
   end
 
   defp find_server_by_pid(clients, pid) do

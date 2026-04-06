@@ -383,6 +383,41 @@ defmodule OllamaChat.MCPConfigTest do
       assert is_list(errors)
       assert length(errors) >= 3
     end
+
+    test "valid config with root_path preserves it through validate_server_config" do
+      config = %{
+        name: :mcp_filesystem,
+        display_name: "MCP Filesystem",
+        command: "/usr/local/bin/mcp-fs",
+        root_path: "/Users/me/projects/myapp"
+      }
+
+      assert {:ok, normalized} = MCPConfig.validate_server_config(config)
+      assert normalized.root_path == "/Users/me/projects/myapp"
+    end
+
+    test "validate_server_config defaults root_path to nil when not provided" do
+      config = %{
+        name: :mcp_filesystem,
+        display_name: "MCP Filesystem",
+        command: "/usr/local/bin/mcp-fs"
+      }
+
+      assert {:ok, normalized} = MCPConfig.validate_server_config(config)
+      assert normalized.root_path == nil
+    end
+
+    test "validate_server_config rejects empty-string root_path" do
+      config = %{
+        name: :mcp_filesystem,
+        display_name: "MCP Filesystem",
+        command: "/usr/local/bin/mcp-fs",
+        root_path: ""
+      }
+
+      assert {:error, errors} = MCPConfig.validate_server_config(config)
+      assert Enum.any?(errors, fn e -> String.contains?(e, "root_path") end)
+    end
   end
 
   describe "to_internal/1 and to_json/1" do
@@ -396,7 +431,8 @@ defmodule OllamaChat.MCPConfigTest do
         enabled: true,
         requires_approval: false,
         dangerous_tools: ["write_file"],
-        env: %{"HOME" => "/tmp"}
+        env: %{"HOME" => "/tmp"},
+        root_path: "/Users/me/projects"
       }
 
       round_tripped = original |> MCPConfig.to_json() |> MCPConfig.to_internal()
@@ -410,6 +446,7 @@ defmodule OllamaChat.MCPConfigTest do
       assert round_tripped.requires_approval == original.requires_approval
       assert round_tripped.dangerous_tools == original.dangerous_tools
       assert round_tripped.env == original.env
+      assert round_tripped.root_path == original.root_path
     end
 
     test "to_internal/1 converts string name to atom" do
@@ -499,6 +536,55 @@ defmodule OllamaChat.MCPConfigTest do
       assert internal.requires_approval == true
       assert internal.dangerous_tools == ["delete_all"]
       assert internal.env == %{"PORT" => "3000"}
+      # root_path absent in JSON defaults to nil
+      assert internal.root_path == nil
+    end
+
+    test "to_internal/1 preserves root_path when present in JSON" do
+      json_map = %{
+        "name" => "mcp_fs",
+        "display_name" => "FS",
+        "command" => "/bin/fs",
+        "root_path" => "/workspace/src"
+      }
+
+      internal = MCPConfig.to_internal(json_map)
+      assert internal.root_path == "/workspace/src"
+    end
+
+    test "to_json/1 includes root_path in output" do
+      internal = %{
+        name: :mcp_fs,
+        display_name: "FS",
+        command: "/bin/fs",
+        args: [],
+        enabled: true,
+        requires_approval: false,
+        dangerous_tools: [],
+        env: %{},
+        root_path: "/workspace/src"
+      }
+
+      json = MCPConfig.to_json(internal)
+      assert json["root_path"] == "/workspace/src"
+    end
+
+    test "to_json/1 includes root_path as null when nil" do
+      internal = %{
+        name: :mcp_fs,
+        display_name: "FS",
+        command: "/bin/fs",
+        args: [],
+        enabled: true,
+        requires_approval: false,
+        dangerous_tools: [],
+        env: %{},
+        root_path: nil
+      }
+
+      json = MCPConfig.to_json(internal)
+      assert Map.has_key?(json, "root_path")
+      assert json["root_path"] == nil
     end
   end
 

@@ -4011,7 +4011,17 @@ defmodule OllamaChatWeb.ChatLive do
 
         loadConversations() {
           const conversations = this.getConversations();
-          this.pushEvent("conversations_loaded", { conversations: conversations });
+
+          // Send only metadata (without messages) to avoid timeout with large data
+          const conversationsMetadata = conversations.map(conv => ({
+            id: conv.id,
+            title: conv.title,
+            model: conv.model,
+            created_at: conv.created_at,
+            updated_at: conv.updated_at
+          }));
+
+          this.pushEvent("conversations_loaded", { conversations: conversationsMetadata });
 
           // Check storage warning
           if (conversations.length >= this.warnAtConversations) {
