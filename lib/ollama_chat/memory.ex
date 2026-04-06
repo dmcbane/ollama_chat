@@ -35,7 +35,9 @@ defmodule OllamaChat.Memory do
 
   import Ecto.Query, warn: false
 
+  alias OllamaChat.Memory.ConversationSummary
   alias OllamaChat.Memory.Entry
+  alias OllamaChat.OllamaClient
   alias OllamaChat.Repo
 
   require Logger
@@ -347,6 +349,50 @@ defmodule OllamaChat.Memory do
     end)
   end
 
+  @default_max_memory_tokens 500
+
+  @doc """
+  Retrieves the most relevant memories for a given query using hybrid scoring.
+
+  Combines semantic similarity (via pgvector embeddings), importance, and recency
+  to score and rank memories. Falls back to full-text search if embedding generation
+  fails, then gracefully degrades to an empty list on further failures.
+
+  Updates access tracking (count + timestamp) for all returned memories.
+
+  Returns `{:ok, [entries]}` on success, or `{:error, reason}` when unavailable.
+
+  ## Options
+
+  - `:limit` — Maximum memories to retrieve (default: `OLLAMA_MEMORY_MAX_RESULTS` env or 10)
+  - `:memory_type` — Filter by type
+  - `:min_importance` — Minimum importance threshold
+  - `:embedding_fn` — Override embedding generation `(text -> {:ok, vec} | {:error, reason})` (for testing)
+  """
+  def retrieve_relevant(query_text, opts) when is_binary(query_text) do
+    with_db(fn ->
+      limit = Keyword.get(opts, :limit, memory_max_results())
+      embedding_fn = Keyword.get(opts, :embedding_fn, &OllamaClient.generate_embedding/1)
+
+      entries =
+        case embedding_fn.(query_text) do
+          {:ok, query_embedding} ->
+            do_hybrid_query(Pgvector.new(query_embedding), limit, opts)
+
+          {:error, reason} ->
+            Logger.warning(
+              "Memory retrieval: embedding generation failed (#{inspect(reason)}), " <>
+                "falling back to full-text search"
+            )
+
+            do_fulltext_query(query_text, limit, opts)
+        end
+
+      do_update_access_tracking(entries)
+      {:ok, trim_to_token_budget(entries)}
+    end)
+  end
+
   @doc """
   Retrieves the most relevant memories for a given context.
 
@@ -507,6 +553,69 @@ defmodule OllamaChat.Memory do
     """
   end
 
+  # ── Conversation Summaries ──────────────────────────────────────────────────
+
+  @doc """
+  Creates or updates a conversation summary (upsert by `conversation_id`).
+
+  If a summary already exists for the given `conversation_id`, its `summary`,
+  `key_topics`, `message_count`, and `updated_at` fields are replaced.
+
+  Returns `{:ok, summary}` on success, `{:error, changeset}` on validation
+  failure, or `{:error, reason}` when unavailable.
+  """
+  def create_conversation_summary(attrs) when is_map(attrs) do
+    with_db(fn ->
+      %ConversationSummary{}
+      |> ConversationSummary.changeset(attrs)
+      |> Repo.insert(
+        on_conflict: {:replace, [:summary, :key_topics, :message_count, :updated_at]},
+        conflict_target: :conversation_id
+      )
+      |> tap_ok(fn s ->
+        Logger.info("Conversation summary stored: conversation=#{s.conversation_id}")
+      end)
+    end)
+  end
+
+  @doc """
+  Gets a conversation summary by `conversation_id`.
+
+  Returns `{:ok, summary}` if found, `{:ok, nil}` if not found,
+  or `{:error, reason}` when unavailable.
+  """
+  def get_conversation_summary(conversation_id) when is_binary(conversation_id) do
+    with_db(fn ->
+      {:ok, Repo.get_by(ConversationSummary, conversation_id: conversation_id)}
+    end)
+  end
+
+  @doc """
+  Lists conversation summaries ordered by most recently created first.
+
+  Returns `{:ok, [summaries]}` on success or `{:error, reason}` when unavailable.
+
+  ## Options
+
+  - `:limit` — Maximum entries to return (default: 50)
+  - `:offset` — Offset for pagination (default: 0)
+  """
+  def list_conversation_summaries(opts \\ []) do
+    with_db(fn ->
+      limit = Keyword.get(opts, :limit, 50)
+      offset = Keyword.get(opts, :offset, 0)
+
+      result =
+        ConversationSummary
+        |> order_by([cs], desc: cs.inserted_at)
+        |> limit(^limit)
+        |> offset(^offset)
+        |> Repo.all()
+
+      {:ok, result}
+    end)
+  end
+
   # ── Statistics ──────────────────────────────────────────────────────────────
 
   @doc """
@@ -633,4 +742,96 @@ defmodule OllamaChat.Memory do
   end
 
   defp tap_ok(error, _fun), do: error
+
+  # ── Phase 3: Hybrid Retrieval Helpers ────────────────────────────────────────
+
+  # Hybrid scoring query: 60% semantic similarity + 25% importance + 15% recency.
+  # Only considers entries that have an embedding stored.
+  defp do_hybrid_query(vector, limit, opts) do
+    Entry
+    |> apply_filters(opts)
+    |> where([m], not is_nil(m.embedding))
+    |> order_by(
+      [m],
+      desc:
+        fragment(
+          "(0.60 * (1.0 - (? <=> ?))) + (0.25 * ?) + (0.15 * (1.0 / (1.0 + EXTRACT(EPOCH FROM (NOW() - COALESCE(?, ?))) / 86400.0 * 0.1)))",
+          m.embedding,
+          ^vector,
+          m.importance,
+          m.last_accessed_at,
+          m.inserted_at
+        )
+    )
+    |> limit(^limit)
+    |> Repo.all()
+  rescue
+    e ->
+      Logger.warning(
+        "Memory hybrid query failed: #{Exception.message(e)}, falling back to full-text search"
+      )
+
+      []
+  end
+
+  # Full-text fallback used when embedding generation fails.
+  defp do_fulltext_query(query_text, limit, opts) do
+    Entry
+    |> where(
+      [m],
+      fragment(
+        "to_tsvector('english', ?) @@ plainto_tsquery('english', ?)",
+        m.content,
+        ^query_text
+      )
+    )
+    |> apply_filters(opts)
+    |> order_by(
+      [m],
+      desc:
+        fragment(
+          "ts_rank(to_tsvector('english', ?), plainto_tsquery('english', ?))",
+          m.content,
+          ^query_text
+        )
+    )
+    |> limit(^limit)
+    |> Repo.all()
+  rescue
+    e ->
+      Logger.warning("Memory full-text query failed: #{Exception.message(e)}")
+      []
+  end
+
+  # Updates access_count and last_accessed_at for a list of retrieved entries.
+  # Best-effort: errors are logged and silently ignored.
+  defp do_update_access_tracking([]), do: :ok
+
+  defp do_update_access_tracking(entries) do
+    ids = Enum.map(entries, & &1.id)
+    _ = touch_memories(ids)
+    :ok
+  end
+
+  # Trims memories to fit within an approximate token budget.
+  # Uses a rough estimate of 1 token ≈ 4 characters.
+  defp trim_to_token_budget(entries, max_tokens \\ @default_max_memory_tokens) do
+    entries
+    |> Enum.reduce_while({[], 0}, fn entry, {acc, tokens} ->
+      estimated = div(String.length(entry.content), 4) + 1
+
+      if tokens + estimated <= max_tokens do
+        {:cont, {[entry | acc], tokens + estimated}}
+      else
+        {:halt, {acc, tokens}}
+      end
+    end)
+    |> elem(0)
+    |> Enum.reverse()
+  end
+
+  # Reads the max number of memories to retrieve from application config.
+  defp memory_max_results do
+    Application.get_env(:ollama_chat, :memory_max_results, 10)
+  end
 end

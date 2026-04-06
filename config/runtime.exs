@@ -34,6 +34,7 @@ config :ollama_chat,
   health_check_interval:
     String.to_integer(System.get_env("OLLAMA_HEALTH_CHECK_INTERVAL_MS", "30000")),
   memory_enabled: System.get_env("OLLAMA_MEMORY_ENABLED", "true") == "true",
+  memory_max_results: String.to_integer(System.get_env("OLLAMA_MEMORY_MAX_RESULTS", "10")),
   ollama_embedding_model: System.get_env("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 
 # Only override mcp_config_path when the env var is explicitly set,

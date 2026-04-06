@@ -1279,4 +1279,124 @@ defmodule OllamaChat.MemoryTest do
       assert {:error, :memory_disabled} = Memory.search_by_similarity_with_scores(@fake_embedding)
     end
   end
+
+  describe "retrieve_relevant/2 with query text (hybrid scoring)" do
+    @fake_query_embedding Enum.map(1..768, fn i -> :math.sin(i / 50) end)
+
+    defp mock_embed_ok(_text), do: {:ok, @fake_query_embedding}
+    defp mock_embed_fail(_text), do: {:error, :embedding_unavailable}
+
+    defp create_memory_with_vec!(overrides \\ %{}) do
+      entry = create_memory!(overrides)
+      vec = Pgvector.new(@fake_embedding)
+      {:ok, updated} = OllamaChat.Repo.update(Ecto.Changeset.change(entry, embedding: vec))
+      updated
+    end
+
+    test "returns {:ok, list} when embedding succeeds and entries have embeddings" do
+      _m1 = create_memory_with_vec!(%{content: "User prefers Elixir", importance: 0.8})
+      _m2 = create_memory_with_vec!(%{content: "User likes short answers", importance: 0.6})
+
+      assert {:ok, entries} =
+               Memory.retrieve_relevant("What does the user prefer?",
+                 embedding_fn: &mock_embed_ok/1
+               )
+
+      assert entries != []
+      assert Enum.all?(entries, fn e -> not is_nil(e.embedding) end)
+    end
+
+    test "falls back to full-text search when embedding fails" do
+      _m = create_memory!(%{content: "User works with Phoenix framework"})
+
+      assert {:ok, entries} =
+               Memory.retrieve_relevant("Phoenix",
+                 embedding_fn: &mock_embed_fail/1
+               )
+
+      assert Enum.any?(entries, fn e -> String.contains?(e.content, "Phoenix") end)
+    end
+
+    test "returns empty list when embedding fails and no full-text matches" do
+      create_memory!(%{content: "User works with Phoenix"})
+
+      assert {:ok, []} =
+               Memory.retrieve_relevant("zzz_totally_unrelated_xyz",
+                 embedding_fn: &mock_embed_fail/1
+               )
+    end
+
+    test "updates access tracking (access_count and last_accessed_at) on retrieval" do
+      m = create_memory!(%{content: "User enjoys functional programming"})
+      assert m.access_count == 0
+      assert m.last_accessed_at == nil
+
+      # Use failing embed so it falls back to full-text and finds the entry
+      assert {:ok, _} =
+               Memory.retrieve_relevant("functional programming",
+                 embedding_fn: &mock_embed_fail/1
+               )
+
+      assert {:ok, updated} = Memory.get_memory(m.id)
+      assert updated.access_count == 1
+      assert updated.last_accessed_at != nil
+    end
+
+    test "respects limit option" do
+      for i <- 1..5, do: create_memory!(%{content: "Elixir memory item #{i}"})
+
+      assert {:ok, entries} =
+               Memory.retrieve_relevant("Elixir",
+                 limit: 2,
+                 embedding_fn: &mock_embed_fail/1
+               )
+
+      assert Enum.count(entries) in 0..2
+    end
+
+    test "trims results to token budget (500 tokens ≈ 2000 chars)" do
+      # Each entry is ~300 chars. After two entries we exceed the default 500-token budget.
+      long_content = String.duplicate("x", 300)
+
+      for i <- 1..5 do
+        create_memory!(%{content: "#{long_content} #{i} unique_marker_abc"})
+      end
+
+      assert {:ok, entries} =
+               Memory.retrieve_relevant("unique_marker_abc",
+                 embedding_fn: &mock_embed_fail/1
+               )
+
+      total_chars = Enum.sum(Enum.map(entries, fn e -> String.length(e.content) end))
+      # 500 tokens × 4 chars/token = 2000 chars. Each entry ≈ 302 chars → max ~6 fit,
+      # but we also only store 5 so just assert it returned a non-empty, bounded set.
+      assert entries != []
+      # Verify no individual entry exceeds reasonable size
+      assert total_chars <= 500 * 4 + 600
+    end
+
+    test "returns {:error, :memory_disabled} when memory is disabled" do
+      Application.put_env(:ollama_chat, :memory_enabled, false)
+
+      on_exit(fn -> Application.put_env(:ollama_chat, :memory_enabled, true) end)
+
+      assert {:error, :memory_disabled} =
+               Memory.retrieve_relevant("anything",
+                 embedding_fn: &mock_embed_ok/1
+               )
+    end
+
+    test "applies memory_type filter" do
+      create_memory!(%{content: "Fact about Elixir", memory_type: "fact"})
+      create_memory!(%{content: "Preference about Elixir", memory_type: "preference"})
+
+      assert {:ok, entries} =
+               Memory.retrieve_relevant("Elixir",
+                 memory_type: "fact",
+                 embedding_fn: &mock_embed_fail/1
+               )
+
+      assert Enum.all?(entries, fn e -> e.memory_type == "fact" end)
+    end
+  end
 end

@@ -17,7 +17,19 @@ defmodule OllamaChatWeb.ChatLive do
 
   use OllamaChatWeb, :live_view
 
-  alias OllamaChat.{Markdown, MCPClient, MCPPromptBuilder, MCPResponseParser, OllamaClient}
+  alias OllamaChat.{
+    Markdown,
+    MCPClient,
+    MCPPromptBuilder,
+    MCPResponseParser,
+    Memory,
+    OllamaClient,
+    ToolPromptBuilder,
+    ToolRouter
+  }
+
+  alias OllamaChat.BuiltinTools.Registry, as: BuiltinRegistry
+  alias OllamaChat.Memory.Extractor, as: MemoryExtractor
 
   require Logger
 
@@ -275,10 +287,10 @@ defmodule OllamaChatWeb.ChatLive do
           }
         end)
 
-      # Build system prompt (MCP-aware if tools available)
+      # Build system prompt (tool-aware: includes built-in memory tools + MCP tools)
       system_prompt =
-        if socket.assigns.mcp_enabled? and map_size(socket.assigns.mcp_tools) > 0 do
-          MCPPromptBuilder.build_tool_aware_system_prompt(
+        if ToolPromptBuilder.any_tools_available?(socket.assigns.mcp_tools) do
+          ToolPromptBuilder.build_tool_aware_system_prompt(
             socket.assigns.mcp_tools,
             socket.assigns.system_prompt
           )
@@ -288,6 +300,16 @@ defmodule OllamaChatWeb.ChatLive do
           else
             nil
           end
+        end
+
+      # Retrieve relevant memories and inject into system prompt (Phase 3)
+      memory_context = retrieve_memory_context(message)
+
+      system_prompt =
+        case {system_prompt, Memory.format_for_prompt(memory_context)} do
+          {base, nil} -> base
+          {nil, mem_section} -> mem_section
+          {base, mem_section} -> base <> "\n\n" <> mem_section
         end
 
       messages_for_api =
@@ -1159,6 +1181,42 @@ defmodule OllamaChatWeb.ChatLive do
       socket
       |> assign(:status_message, nil)
       |> assign(:error, "Failed to kill Ollama: #{reason}")
+
+    {:noreply, socket}
+  end
+
+  # Built-in Tool Call Handlers
+
+  @impl true
+  def handle_info({:builtin_tool_result, message_id, tool_name, result_text}, socket) do
+    Logger.info("Built-in tool #{tool_name} completed: #{String.slice(result_text, 0, 80)}")
+
+    # Show a toast notification when the LLM saves a memory
+    socket =
+      if tool_name == "memory_save" do
+        show_toast(socket, "Memory saved", :success)
+      else
+        socket
+      end
+
+    # Add tool result to streaming events
+    updated_events =
+      socket.assigns.streaming_events ++
+        [
+          %{
+            type: :tool_result,
+            tool_name: tool_name,
+            content: result_text,
+            timestamp: DateTime.utc_now()
+          }
+        ]
+
+    socket = assign(socket, :streaming_events, updated_events)
+
+    # Wrap the plain-text result in a content list so continue_with_tool_result
+    # can format it identically to MCP tool results.
+    result_as_content = [%{"type" => "text", "text" => result_text}]
+    socket = continue_with_tool_result(socket, message_id, tool_name, result_as_content)
 
     {:noreply, socket}
   end
@@ -3484,6 +3542,17 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   defp start_new_conversation(socket) do
+    # Trigger async memory extraction if the previous conversation was long enough
+    old_history = socket.assigns.message_history
+    conversation_id = socket.assigns.current_conversation_id
+
+    if Memory.enabled?() and conversation_id != nil and
+         MemoryExtractor.should_extract?(old_history) do
+      # message_history is stored newest-first; reverse so the LLM sees chronological order
+      messages = Enum.reverse(old_history)
+      MemoryExtractor.extract_and_save_async(conversation_id, messages)
+    end
+
     socket
     |> stream(:messages, [], reset: true)
     |> assign(:messages_empty?, true)
@@ -3662,46 +3731,80 @@ defmodule OllamaChatWeb.ChatLive do
   # MCP Tool Handling Functions
 
   defp handle_tool_call(socket, message_id, tool_name, args) do
-    tool_info = Map.get(socket.assigns.mcp_tools, tool_name)
+    cond do
+      BuiltinRegistry.builtin_tool?(tool_name) ->
+        Logger.info("Built-in tool call: #{tool_name} with args: #{inspect(args)}")
+        execute_builtin_tool(socket, message_id, tool_name, args)
 
-    if tool_info do
-      # Validate arguments
-      case MCPResponseParser.validate_arguments(args, tool_info.schema) do
-        :ok ->
-          if tool_info.requires_approval do
-            # Request user approval
-            Logger.info("Tool #{tool_name} requires approval")
+      Map.has_key?(socket.assigns.mcp_tools, tool_name) ->
+        tool_info = socket.assigns.mcp_tools[tool_name]
+
+        # Validate arguments
+        case MCPResponseParser.validate_arguments(args, tool_info.schema) do
+          :ok ->
+            if tool_info.requires_approval do
+              # Request user approval
+              Logger.info("Tool #{tool_name} requires approval")
+
+              socket
+              |> assign(:pending_approval, %{
+                message_id: message_id,
+                tool_name: tool_name,
+                tool_info: tool_info,
+                args: args
+              })
+              |> assign(:loading, false)
+              |> assign(:streaming_pid, nil)
+            else
+              # Execute immediately via MCP
+              execute_mcp_tool(socket, message_id, tool_name, args)
+            end
+
+          {:error, validation_error} ->
+            Logger.warning("Tool argument validation failed: #{validation_error}")
 
             socket
-            |> assign(:pending_approval, %{
-              message_id: message_id,
-              tool_name: tool_name,
-              tool_info: tool_info,
-              args: args
-            })
+            |> assign(:error, "Invalid tool arguments: #{validation_error}")
             |> assign(:loading, false)
             |> assign(:streaming_pid, nil)
-          else
-            # Execute immediately
-            execute_mcp_tool(socket, message_id, tool_name, args)
-          end
+        end
 
-        {:error, validation_error} ->
-          Logger.warning("Tool argument validation failed: #{validation_error}")
+      true ->
+        Logger.warning("Unknown tool requested: #{tool_name}")
 
-          socket
-          |> assign(:error, "Invalid tool arguments: #{validation_error}")
-          |> assign(:loading, false)
-          |> assign(:streaming_pid, nil)
-      end
-    else
-      Logger.warning("Unknown tool requested: #{tool_name}")
-
-      socket
-      |> assign(:error, "Unknown tool: #{tool_name}")
-      |> assign(:loading, false)
-      |> assign(:streaming_pid, nil)
+        socket
+        |> assign(:error, "Unknown tool: #{tool_name}")
+        |> assign(:loading, false)
+        |> assign(:streaming_pid, nil)
     end
+  end
+
+  defp execute_builtin_tool(socket, message_id, tool_name, args) do
+    updated_events =
+      socket.assigns.streaming_events ++
+        [
+          %{
+            type: :tool_call,
+            tool_name: tool_name,
+            args: args,
+            timestamp: DateTime.utc_now()
+          }
+        ]
+
+    socket = assign(socket, :streaming_events, updated_events)
+    parent = self()
+
+    spawn(fn ->
+      case ToolRouter.route_tool_call(tool_name, args) do
+        {:ok, result_text} ->
+          send(parent, {:builtin_tool_result, message_id, tool_name, result_text})
+
+        {:error, reason} ->
+          send(parent, {:tool_error, message_id, tool_name, reason})
+      end
+    end)
+
+    assign(socket, :loading, true)
   end
 
   defp execute_mcp_tool(socket, message_id, tool_name, args) do
@@ -3758,10 +3861,10 @@ defmodule OllamaChatWeb.ChatLive do
         %{role: msg[:role] || msg["role"], content: msg[:content] || msg["content"]}
       end)
 
-    # Add system prompt with tools
+    # Add system prompt with tools (built-in + MCP)
     system_prompt =
-      if socket.assigns.mcp_enabled? and map_size(socket.assigns.mcp_tools) > 0 do
-        MCPPromptBuilder.build_tool_aware_system_prompt(
+      if ToolPromptBuilder.any_tools_available?(socket.assigns.mcp_tools) do
+        ToolPromptBuilder.build_tool_aware_system_prompt(
           socket.assigns.mcp_tools,
           socket.assigns.system_prompt
         )
@@ -3874,6 +3977,35 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   defp format_error(reason), do: "An error occurred: #{inspect(reason)}"
+
+  # ── Memory Context (Phase 3) ─────────────────────────────────────────────────
+
+  # Retrieves relevant memories for the given user message and returns them as a
+  # list of %Memory.Entry{} structs. Returns [] when the memory system is
+  # unavailable or on any error, so it never blocks the chat flow.
+  defp retrieve_memory_context(user_message) do
+    if Memory.available?() do
+      limit = Application.get_env(:ollama_chat, :memory_max_results, 10)
+
+      case Memory.retrieve_relevant(user_message, limit: limit) do
+        {:ok, memories} ->
+          if memories != [] do
+            Logger.debug("Injecting #{length(memories)} memories into system prompt")
+          end
+
+          memories
+
+        {:error, reason} ->
+          Logger.warning(
+            "Memory context retrieval failed: #{inspect(reason)}, proceeding without memories"
+          )
+
+          []
+      end
+    else
+      []
+    end
+  end
 
   defp build_stream_callback(parent, message_id) do
     fn chunk ->
