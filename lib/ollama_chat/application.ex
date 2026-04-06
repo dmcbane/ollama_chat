@@ -109,7 +109,14 @@ defmodule OllamaChat.Application do
 
   defp maybe_repo do
     if Application.get_env(:ollama_chat, :memory_enabled, true) do
-      [OllamaChat.Repo]
+      manager =
+        if Application.get_env(:ollama_chat, :start_memory_manager, true) do
+          [OllamaChat.Memory.Manager]
+        else
+          []
+        end
+
+      [OllamaChat.Repo] ++ manager
     else
       Logger.info("Memory system disabled — skipping database startup")
       []

@@ -616,6 +616,193 @@ defmodule OllamaChat.Memory do
     end)
   end
 
+  # ── Maintenance ─────────────────────────────────────────────────────────────
+
+  @doc """
+  Decays the importance of memories that have not been accessed in 30+ days.
+
+  Applies a 5% reduction per run (multiplied by 0.95), floored at 0.1.
+  Intended to be called periodically (e.g. daily) by `Memory.Manager`.
+
+  Returns `{:ok, count}` (entries updated) or `{:error, reason}`.
+  """
+  def decay_importance do
+    with_db(fn ->
+      thirty_days_ago =
+        DateTime.utc_now() |> DateTime.add(-30, :day) |> DateTime.truncate(:second)
+
+      {count, _} =
+        Entry
+        |> where([m], m.importance > 0.1)
+        |> where([m], is_nil(m.last_accessed_at) or m.last_accessed_at < ^thirty_days_ago)
+        |> update([m], set: [importance: fragment("GREATEST(? * 0.95, 0.1)", m.importance)])
+        |> Repo.update_all([])
+
+      Logger.info("Decayed importance for #{count} stale memories")
+      {:ok, count}
+    end)
+  end
+
+  @doc """
+  Finds pairs of semantically similar memories using pgvector cosine distance.
+
+  Only considers entries that have embeddings stored. Returns at most 50 pairs
+  ordered by distance (closest first).
+
+  `threshold` is a cosine distance (0.0 = identical, 2.0 = opposite).
+  Default 0.10 corresponds to ≥90% cosine similarity.
+
+  Returns `{:ok, [{entry1, entry2, distance}]}` or `{:error, reason}`.
+  """
+  def find_duplicates(threshold \\ 0.10) do
+    with_db(fn ->
+      result =
+        Entry
+        |> where([m1], not is_nil(m1.embedding))
+        |> join(:inner, [m1], m2 in Entry,
+          on: fragment("? < ?", m1.id, m2.id) and not is_nil(m2.embedding)
+        )
+        |> where([m1, m2], fragment("(? <=> ?)", m1.embedding, m2.embedding) < ^threshold)
+        |> select([m1, m2], {m1, m2, fragment("(? <=> ?)", m1.embedding, m2.embedding)})
+        |> order_by([m1, m2], asc: fragment("(? <=> ?)", m1.embedding, m2.embedding))
+        |> limit(50)
+        |> Repo.all()
+
+      {:ok, result}
+    end)
+  end
+
+  @doc """
+  Deletes the lowest-scored memories when the total count exceeds `max_count`.
+
+  Scoring formula: `importance × recency_factor × ln(access_count + 1)`.
+  `user_manual` memories are never pruned automatically.
+
+  `max_count` defaults to the `:memory_max_count` app config key (default 1000).
+
+  Returns `{:ok, deleted_count}` or `{:error, reason}`.
+  """
+  def prune_to_limit(max_count \\ nil) do
+    with_db(fn ->
+      limit = max_count || Application.get_env(:ollama_chat, :memory_max_count, 1_000)
+      current_count = Repo.aggregate(Entry, :count)
+
+      if current_count <= limit do
+        {:ok, 0}
+      else
+        to_prune = current_count - limit
+
+        # Fetch prunable entries, compute scores in Elixir to avoid Postgrex
+        # timestamptz parameter-binding ambiguity in SQL fragments.
+        now = DateTime.utc_now()
+
+        prunable_ids =
+          Entry
+          |> where([m], m.source != "user_manual")
+          |> Repo.all()
+          |> Enum.sort_by(fn m ->
+            ref_time = m.last_accessed_at || m.inserted_at
+            days_old = DateTime.diff(now, ref_time, :second) / 86_400.0
+            recency = 1.0 / (1.0 + days_old)
+            m.importance * recency * :math.log(m.access_count + 2.0)
+          end)
+          |> Enum.take(to_prune)
+          |> Enum.map(& &1.id)
+
+        {deleted, _} = Repo.delete_all(from(m in Entry, where: m.id in ^prunable_ids))
+        Logger.info("Pruned #{deleted} memories (was #{current_count}, limit: #{limit})")
+        {:ok, deleted}
+      end
+    end)
+  end
+
+  @doc """
+  Exports all memory entries as a JSON string.
+
+  Returns `{:ok, json_string}` or `{:error, reason}`.
+
+  The JSON is a list of objects with fields:
+  `content`, `memory_type`, `category`, `importance`, `source`,
+  `conversation_id`, `access_count`, `metadata`, `inserted_at`.
+  """
+  def export_memories(format \\ :json)
+
+  def export_memories(:json) do
+    with_db(fn ->
+      entries = Repo.all(from(m in Entry, order_by: [asc: m.inserted_at]))
+
+      data =
+        Enum.map(entries, fn m ->
+          %{
+            content: m.content,
+            memory_type: m.memory_type,
+            category: m.category,
+            importance: m.importance,
+            source: m.source,
+            conversation_id: m.conversation_id,
+            access_count: m.access_count,
+            metadata: m.metadata,
+            inserted_at: DateTime.to_iso8601(m.inserted_at)
+          }
+        end)
+
+      {:ok, Jason.encode!(data)}
+    end)
+  end
+
+  def export_memories(format) do
+    {:error, {:unsupported_format, format}}
+  end
+
+  @doc """
+  Imports memory entries from a JSON string.
+
+  Parses the JSON, validates each entry via the normal changeset, and inserts
+  all valid records. Invalid items are counted as errors, not silently dropped.
+
+  Returns `{:ok, %{imported: n, failed: n, errors: [...]}}` or `{:error, reason}`.
+
+  ## Options
+  - `:embedding_fn` — Override embedding generation for newly imported entries.
+  """
+  def import_memories(json_data, opts \\ []) when is_binary(json_data) do
+    with_db(fn ->
+      case Jason.decode(json_data) do
+        {:ok, items} when is_list(items) ->
+          {imported, failed, errors} =
+            Enum.reduce(items, {0, 0, []}, fn item, {ok_count, err_count, errs} ->
+              attrs = %{
+                content: Map.get(item, "content", ""),
+                memory_type: Map.get(item, "memory_type", "fact"),
+                category: Map.get(item, "category"),
+                importance: Map.get(item, "importance", 0.5),
+                source: Map.get(item, "source", "user_manual"),
+                conversation_id: Map.get(item, "conversation_id"),
+                metadata: Map.get(item, "metadata", %{})
+              }
+
+              case create_memory(attrs) do
+                {:ok, entry} ->
+                  Task.start(fn -> OllamaChat.Embeddings.generate_and_store(entry, opts) end)
+                  {ok_count + 1, err_count, errs}
+
+                {:error, reason} ->
+                  {ok_count, err_count + 1, [reason | errs]}
+              end
+            end)
+
+          Logger.info("Memory import: #{imported} imported, #{failed} failed")
+          {:ok, %{imported: imported, failed: failed, errors: Enum.reverse(errors)}}
+
+        {:ok, _} ->
+          {:error, {:invalid_format, "Expected a JSON array"}}
+
+        {:error, reason} ->
+          {:error, {:json_decode_error, reason}}
+      end
+    end)
+  end
+
   # ── Statistics ──────────────────────────────────────────────────────────────
 
   @doc """

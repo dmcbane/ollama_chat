@@ -33,6 +33,9 @@ config :ollama_chat,
        Path.join(System.tmp_dir!(), "ollama_chat_test/mcp_servers.json")
 
 # Database configuration for tests
+# Prevent Memory.Manager from auto-starting so tests can supervise their own instances
+config :ollama_chat, :start_memory_manager, false
+
 config :ollama_chat, OllamaChat.Repo,
   database: "ollama_chat_test#{System.get_env("MIX_TEST_PARTITION")}",
   username: System.get_env("OLLAMA_CHAT_DB_USERNAME", "ollama_chat"),

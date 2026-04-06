@@ -82,6 +82,13 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:mcp_server_configs, [])
       |> assign(:editing_mcp_server, nil)
       |> assign(:mcp_form_error, nil)
+      |> assign(:memory_list, [])
+      |> assign(:memory_search, "")
+      |> assign(:memory_filter_type, "")
+      |> assign(:memory_stats, nil)
+      |> assign(:editing_memory_id, nil)
+      |> assign(:memory_edit_importance, "0.5")
+      |> assign(:memory_edit_type, "fact")
       |> assign(:health_check_enabled, OllamaClient.health_check_enabled?())
       |> assign(:health_check_healthy, true)
       |> assign(:health_check_timer, nil)
@@ -707,6 +714,7 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_event("switch_settings_tab", %{"tab" => tab}, socket) do
     tab_atom = String.to_existing_atom(tab)
+    socket = if tab_atom == :memories, do: load_memories_data(socket), else: socket
     {:noreply, assign(socket, :settings_tab, tab_atom)}
   end
 
@@ -910,6 +918,144 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def handle_event("dismiss_toast", _params, socket) do
     {:noreply, socket |> assign(:toast_message, nil) |> assign(:toast_type, nil)}
+  end
+
+  # ── Memory Management ─────────────────────────────────────────────────────────
+
+  @impl true
+  def handle_event("memories_search", %{"query" => query}, socket) do
+    socket =
+      socket
+      |> assign(:memory_search, query)
+      |> assign(:editing_memory_id, nil)
+      |> load_memories_data()
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("memories_filter_type", %{"type" => type}, socket) do
+    socket =
+      socket
+      |> assign(:memory_filter_type, type)
+      |> assign(:editing_memory_id, nil)
+      |> load_memories_data()
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("edit_memory", %{"id" => id}, socket) do
+    entry = Enum.find(socket.assigns.memory_list, fn m -> m.id == id end)
+
+    socket =
+      if entry do
+        socket
+        |> assign(:editing_memory_id, id)
+        |> assign(:memory_edit_importance, to_string(Float.round(entry.importance, 2)))
+        |> assign(:memory_edit_type, entry.memory_type)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("cancel_edit_memory", _params, socket) do
+    {:noreply, assign(socket, :editing_memory_id, nil)}
+  end
+
+  @impl true
+  def handle_event(
+        "save_memory",
+        %{"id" => id, "importance" => imp_str, "memory_type" => type},
+        socket
+      ) do
+    case Memory.get_memory(id) do
+      {:ok, entry} ->
+        importance =
+          case Float.parse(imp_str) do
+            {f, _} -> min(1.0, max(0.0, f))
+            :error -> entry.importance
+          end
+
+        case Memory.update_memory(entry, %{importance: importance, memory_type: type}) do
+          {:ok, _} ->
+            socket =
+              socket
+              |> assign(:editing_memory_id, nil)
+              |> load_memories_data()
+              |> show_toast("Memory updated", :success)
+
+            {:noreply, socket}
+
+          {:error, _changeset} ->
+            {:noreply, show_toast(socket, "Failed to update memory", :error)}
+        end
+
+      {:error, _} ->
+        {:noreply, show_toast(socket, "Memory not found", :error)}
+    end
+  end
+
+  @impl true
+  def handle_event("delete_memory", %{"id" => id}, socket) do
+    case Memory.delete_memory_by_id(id) do
+      {:ok, _} ->
+        socket =
+          socket
+          |> assign(:editing_memory_id, nil)
+          |> load_memories_data()
+          |> show_toast("Memory deleted", :success)
+
+        {:noreply, socket}
+
+      {:error, reason} ->
+        Logger.warning("Failed to delete memory #{id}: #{inspect(reason)}")
+        {:noreply, show_toast(socket, "Failed to delete memory", :error)}
+    end
+  end
+
+  @impl true
+  def handle_event("delete_all_memories", _params, socket) do
+    case Memory.delete_all_memories() do
+      {:ok, count} ->
+        socket =
+          socket
+          |> load_memories_data()
+          |> show_toast(
+            "Deleted #{count} #{if count == 1, do: "memory", else: "memories"}",
+            :success
+          )
+
+        {:noreply, socket}
+
+      {:error, reason} ->
+        Logger.warning("Failed to delete all memories: #{inspect(reason)}")
+        {:noreply, show_toast(socket, "Failed to delete memories", :error)}
+    end
+  end
+
+  @impl true
+  def handle_event("export_memories", _params, socket) do
+    case Memory.export_memories(:json) do
+      {:ok, json} ->
+        today = Date.utc_today() |> Date.to_iso8601()
+
+        socket =
+          push_event(socket, "download_file", %{
+            content: json,
+            filename: "memories_#{today}.json",
+            mime_type: "application/json"
+          })
+
+        {:noreply, socket}
+
+      {:error, reason} ->
+        Logger.warning("Failed to export memories: #{inspect(reason)}")
+        {:noreply, show_toast(socket, "Failed to export memories", :error)}
+    end
   end
 
   @impl true
@@ -1720,6 +1866,9 @@ defmodule OllamaChatWeb.ChatLive do
           <%!-- Hidden hook for loading storage preferences at mount --%>
           <div id="storage-settings" class="hidden" phx-hook=".StorageSettings"></div>
 
+          <%!-- Hidden hook for memory file downloads --%>
+          <div id="memory-download" class="hidden" phx-hook=".MemoryDownload"></div>
+
           <%!-- Footer info (sidebar) --%>
           <div class="text-center text-sm text-slate-400 mt-6 hidden xl:block">
             <p>
@@ -2141,6 +2290,32 @@ defmodule OllamaChatWeb.ChatLive do
                         </span>
                       <% end %>
                     </button>
+                    <%= if Memory.enabled?() do %>
+                      <button
+                        type="button"
+                        phx-click="switch_settings_tab"
+                        phx-value-tab="memories"
+                        id="settings-tab-memories"
+                        role="tab"
+                        aria-selected={to_string(@settings_tab == :memories)}
+                        aria-controls="settings-memories-tab-panel"
+                        class={[
+                          "px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px",
+                          if(@settings_tab == :memories,
+                            do: "border-blue-500 text-blue-400",
+                            else:
+                              "border-transparent text-gray-400 hover:text-gray-200 hover:border-slate-500"
+                          )
+                        ]}
+                      >
+                        Memories
+                        <%= if @memory_stats != nil and @memory_stats.total > 0 do %>
+                          <span class="ml-1.5 px-1.5 py-0.5 text-xs bg-emerald-600/60 text-emerald-200 rounded-full">
+                            {@memory_stats.total}
+                          </span>
+                        <% end %>
+                      </button>
+                    <% end %>
                   </div>
 
                   <%!-- Tab Content (scrollable) --%>
@@ -2740,6 +2915,282 @@ defmodule OllamaChatWeb.ChatLive do
                               <% end %>
                             </div>
                           <% end %>
+                        <% end %>
+                      </div>
+                    <% end %>
+
+                    <%!-- Memories Tab --%>
+                    <%= if @settings_tab == :memories do %>
+                      <div
+                        class="space-y-5 animate-tab-panel"
+                        id="settings-memories-tab-panel"
+                        role="tabpanel"
+                        aria-labelledby="settings-tab-memories"
+                      >
+                        <%= if not Memory.enabled?() do %>
+                          <div class="text-center py-8">
+                            <.icon name="hero-cpu-chip" class="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                            <p class="text-gray-400 text-sm">Memory system is not enabled.</p>
+                            <p class="text-gray-500 text-xs mt-1">
+                              Set <code class="text-blue-400">OLLAMA_MEMORY_ENABLED=true</code>
+                              to enable.
+                            </p>
+                          </div>
+                        <% else %>
+                          <%!-- Stats Row --%>
+                          <%= if @memory_stats != nil do %>
+                            <div class="grid grid-cols-3 gap-3">
+                              <div class="bg-slate-900 rounded-lg px-4 py-3 border border-slate-700">
+                                <div class="text-2xl font-bold text-white">{@memory_stats.total}</div>
+                                <div class="text-xs text-gray-400 mt-0.5">Total Memories</div>
+                              </div>
+                              <div class="bg-slate-900 rounded-lg px-4 py-3 border border-slate-700">
+                                <div class="text-2xl font-bold text-white">
+                                  {Float.round(@memory_stats.average_importance * 100) |> trunc()}%
+                                </div>
+                                <div class="text-xs text-gray-400 mt-0.5">Avg Importance</div>
+                              </div>
+                              <div class="bg-slate-900 rounded-lg px-4 py-3 border border-slate-700">
+                                <div class="text-2xl font-bold text-white">
+                                  {map_size(@memory_stats.by_type)}
+                                </div>
+                                <div class="text-xs text-gray-400 mt-0.5">Types Active</div>
+                              </div>
+                            </div>
+                          <% end %>
+
+                          <%!-- Search & Filter Controls --%>
+                          <div class="flex gap-2">
+                            <div class="flex-1 relative">
+                              <input
+                                type="text"
+                                name="query"
+                                value={@memory_search}
+                                placeholder="Search memories..."
+                                phx-change="memories_search"
+                                phx-debounce="300"
+                                class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
+                                id="memory-search-input"
+                              />
+                              <.icon
+                                name="hero-magnifying-glass"
+                                class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+                              />
+                            </div>
+                            <select
+                              name="type"
+                              phx-change="memories_filter_type"
+                              class="bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              id="memory-type-filter"
+                            >
+                              <option value="">All types</option>
+                              <option value="fact" selected={@memory_filter_type == "fact"}>
+                                Facts
+                              </option>
+                              <option
+                                value="preference"
+                                selected={@memory_filter_type == "preference"}
+                              >
+                                Preferences
+                              </option>
+                              <option value="context" selected={@memory_filter_type == "context"}>
+                                Context
+                              </option>
+                              <option value="episodic" selected={@memory_filter_type == "episodic"}>
+                                Episodic
+                              </option>
+                            </select>
+                          </div>
+
+                          <%!-- Memory List --%>
+                          <div>
+                            <div class="flex items-center justify-between mb-2">
+                              <label class="text-sm font-medium text-gray-200">
+                                Memories
+                                <span class="ml-2 px-2 py-0.5 text-xs bg-slate-700 text-gray-300 rounded-full">
+                                  {length(@memory_list)}
+                                </span>
+                              </label>
+                              <%= if @memory_list != [] do %>
+                                <div class="flex gap-2">
+                                  <button
+                                    type="button"
+                                    phx-click="export_memories"
+                                    class="px-2.5 py-1 text-xs font-medium text-gray-300 hover:text-white bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors flex items-center gap-1"
+                                    id="export-memories-btn"
+                                  >
+                                    <.icon name="hero-arrow-down-tray" class="w-3.5 h-3.5" /> Export
+                                  </button>
+                                  <button
+                                    type="button"
+                                    phx-click="delete_all_memories"
+                                    data-confirm="Delete ALL memories? This cannot be undone."
+                                    class="px-2.5 py-1 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded-lg transition-colors flex items-center gap-1"
+                                    id="delete-all-memories-btn"
+                                  >
+                                    <.icon name="hero-trash" class="w-3.5 h-3.5" /> Delete All
+                                  </button>
+                                </div>
+                              <% end %>
+                            </div>
+
+                            <%= if @memory_list == [] do %>
+                              <div class="text-center py-10 bg-slate-900/50 rounded-lg border border-dashed border-slate-600">
+                                <.icon
+                                  name="hero-cpu-chip"
+                                  class="w-10 h-10 text-gray-600 mx-auto mb-2"
+                                />
+                                <p class="text-gray-400 text-sm">No memories found</p>
+                                <p class="text-gray-500 text-xs mt-1">
+                                  <%= if @memory_search != "" or @memory_filter_type != "" do %>
+                                    Try clearing the search or filter
+                                  <% else %>
+                                    Memories are saved automatically from conversations
+                                  <% end %>
+                                </p>
+                              </div>
+                            <% else %>
+                              <div class="space-y-2 max-h-72 overflow-y-auto pr-1" id="memory-list">
+                                <%= for entry <- @memory_list do %>
+                                  <div
+                                    class="bg-slate-900 rounded-lg border border-slate-700 transition-colors hover:border-slate-600"
+                                    id={"memory-#{entry.id}"}
+                                  >
+                                    <%= if @editing_memory_id == entry.id do %>
+                                      <%!-- Inline Edit Form --%>
+                                      <div class="px-4 py-3 space-y-3" id={"memory-edit-#{entry.id}"}>
+                                        <div class="text-xs text-gray-400 leading-relaxed line-clamp-2">
+                                          {entry.content}
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-3">
+                                          <div>
+                                            <label class="block text-xs font-medium text-gray-400 mb-1">
+                                              Importance ({@memory_edit_importance})
+                                            </label>
+                                            <input
+                                              type="range"
+                                              name="importance"
+                                              min="0"
+                                              max="1"
+                                              step="0.05"
+                                              value={@memory_edit_importance}
+                                              phx-change="edit_memory_importance_preview"
+                                              class="w-full accent-blue-500"
+                                              id={"importance-slider-#{entry.id}"}
+                                            />
+                                          </div>
+                                          <div>
+                                            <label class="block text-xs font-medium text-gray-400 mb-1">
+                                              Type
+                                            </label>
+                                            <select
+                                              name="memory_type_preview"
+                                              class="w-full bg-slate-800 text-white border border-slate-600 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-blue-500"
+                                              id={"type-select-preview-#{entry.id}"}
+                                            >
+                                              <option
+                                                value="fact"
+                                                selected={@memory_edit_type == "fact"}
+                                              >
+                                                Fact
+                                              </option>
+                                              <option
+                                                value="preference"
+                                                selected={@memory_edit_type == "preference"}
+                                              >
+                                                Preference
+                                              </option>
+                                              <option
+                                                value="context"
+                                                selected={@memory_edit_type == "context"}
+                                              >
+                                                Context
+                                              </option>
+                                              <option
+                                                value="episodic"
+                                                selected={@memory_edit_type == "episodic"}
+                                              >
+                                                Episodic
+                                              </option>
+                                            </select>
+                                          </div>
+                                        </div>
+                                        <div class="flex items-center justify-between pt-1">
+                                          <button
+                                            type="button"
+                                            phx-click="delete_memory"
+                                            phx-value-id={entry.id}
+                                            data-confirm="Delete this memory?"
+                                            class="text-xs text-red-400 hover:text-red-300 transition-colors"
+                                            id={"delete-memory-#{entry.id}"}
+                                          >
+                                            Delete
+                                          </button>
+                                          <div class="flex gap-2">
+                                            <button
+                                              type="button"
+                                              phx-click="cancel_edit_memory"
+                                              class="px-3 py-1 text-xs text-gray-400 hover:text-white rounded-md border border-slate-600 hover:border-slate-500 transition-colors"
+                                              id={"cancel-edit-memory-#{entry.id}"}
+                                            >
+                                              Cancel
+                                            </button>
+                                            <button
+                                              type="button"
+                                              phx-click="save_memory"
+                                              phx-value-id={entry.id}
+                                              phx-value-importance={@memory_edit_importance}
+                                              phx-value-memory_type={@memory_edit_type}
+                                              class="px-3 py-1 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
+                                              id={"save-memory-#{entry.id}"}
+                                            >
+                                              Save
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    <% else %>
+                                      <%!-- Memory Row View --%>
+                                      <div class="px-4 py-3 flex items-start justify-between gap-3">
+                                        <div class="flex-1 min-w-0">
+                                          <p class="text-sm text-gray-200 leading-relaxed line-clamp-2">
+                                            {entry.content}
+                                          </p>
+                                          <div class="flex items-center gap-2 mt-1.5">
+                                            <span class={[
+                                              "px-1.5 py-0.5 text-xs rounded font-medium",
+                                              case entry.memory_type do
+                                                "fact" -> "bg-blue-900/50 text-blue-300"
+                                                "preference" -> "bg-purple-900/50 text-purple-300"
+                                                "context" -> "bg-yellow-900/50 text-yellow-300"
+                                                "episodic" -> "bg-green-900/50 text-green-300"
+                                                _ -> "bg-slate-700 text-gray-300"
+                                              end
+                                            ]}>
+                                              {entry.memory_type}
+                                            </span>
+                                            <span class="text-xs text-gray-500">
+                                              {trunc(entry.importance * 100)}% importance
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          phx-click="edit_memory"
+                                          phx-value-id={entry.id}
+                                          class="flex-shrink-0 p-1.5 text-gray-500 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+                                          title="Edit memory"
+                                          id={"edit-memory-btn-#{entry.id}"}
+                                        >
+                                          <.icon name="hero-pencil-square" class="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    <% end %>
+                                  </div>
+                                <% end %>
+                              </div>
+                            <% end %>
+                          </div>
                         <% end %>
                       </div>
                     <% end %>
@@ -3532,6 +3983,25 @@ defmodule OllamaChatWeb.ChatLive do
         }
       }
     </script>
+
+    <%!-- Memory download hook --%>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".MemoryDownload">
+      export default {
+        mounted() {
+          this.handleEvent("download_file", ({ content, filename, mime_type }) => {
+            const blob = new Blob([content], { type: mime_type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          });
+        }
+      }
+    </script>
     """
   end
 
@@ -4130,5 +4600,38 @@ defmodule OllamaChatWeb.ChatLive do
   defp cancel_stream_timeout(ref) do
     _result = Process.cancel_timer(ref)
     :ok
+  end
+
+  defp load_memories_data(socket) do
+    search = socket.assigns.memory_search
+    type_filter = socket.assigns.memory_filter_type
+
+    base_opts = [limit: 100]
+
+    base_opts =
+      if type_filter != "", do: Keyword.put(base_opts, :memory_type, type_filter), else: base_opts
+
+    memories =
+      if search != "" do
+        case Memory.search_by_text(search, base_opts) do
+          {:ok, list} -> list
+          _ -> []
+        end
+      else
+        case Memory.list_memories(base_opts) do
+          {:ok, list} -> list
+          _ -> []
+        end
+      end
+
+    stats =
+      case Memory.stats() do
+        {:ok, s} -> s
+        _ -> nil
+      end
+
+    socket
+    |> assign(:memory_list, memories)
+    |> assign(:memory_stats, stats)
   end
 end
