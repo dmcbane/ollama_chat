@@ -95,6 +95,7 @@ defmodule OllamaChat.PathGuard do
     String.starts_with?(value, "/") or
       String.starts_with?(value, "~") or
       String.starts_with?(value, "..") or
+      value == "." or
       String.contains?(value, "/") or
       String.contains?(value, "\\")
   end
