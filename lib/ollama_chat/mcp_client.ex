@@ -627,29 +627,47 @@ defmodule OllamaChat.MCPClient do
             {:error, "MCP server not available (may be restarting)"}
 
           client_info ->
-            Logger.info("Executing tool: #{tool_name} on server: #{tool_info.server}")
+            with :ok <- guard_root_path(tool_name, args, client_info.config) do
+              Logger.info("Executing tool: #{tool_name} on server: #{tool_info.server}")
 
-            try do
-              case Client.call_tool(client_info.pid, tool_name, args) do
-                {:ok, result} ->
-                  Logger.debug("Tool #{tool_name} executed successfully")
-                  {:ok, result}
+              try do
+                case Client.call_tool(client_info.pid, tool_name, args) do
+                  {:ok, result} ->
+                    Logger.debug("Tool #{tool_name} executed successfully")
+                    {:ok, result}
 
-                {:error, reason} ->
-                  Logger.error("Tool execution failed for #{tool_name}: #{inspect(reason)}")
-                  {:error, reason}
+                  {:error, reason} ->
+                    Logger.error("Tool execution failed for #{tool_name}: #{inspect(reason)}")
+                    {:error, reason}
+                end
+              catch
+                :exit, reason ->
+                  Logger.error(
+                    "MCP client crashed during tool execution: #{tool_name} - #{inspect(reason)}"
+                  )
+
+                  {:error, "MCP server crashed during execution"}
               end
-            catch
-              :exit, reason ->
-                Logger.error(
-                  "MCP client crashed during tool execution: #{tool_name} - #{inspect(reason)}"
-                )
-
-                {:error, "MCP server crashed during execution"}
             end
         end
     end
   end
+
+  defp guard_root_path(_tool_name, _args, %{root_path: nil}), do: :ok
+  defp guard_root_path(_tool_name, _args, %{root_path: ""}), do: :ok
+
+  defp guard_root_path(tool_name, args, %{root_path: root_path}) do
+    case OllamaChat.PathGuard.sanitize_args(args, root_path) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Tool #{tool_name} blocked by path guard: #{reason}")
+        {:error, "Access denied: #{reason}"}
+    end
+  end
+
+  defp guard_root_path(_tool_name, _args, _config), do: :ok
 
   @dialyzer {:nowarn_function, requires_approval?: 2}
   defp requires_approval?(server_config, tool_name) do

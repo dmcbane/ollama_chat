@@ -731,7 +731,8 @@ defmodule OllamaChatWeb.ChatLive do
       "args" => "",
       "enabled" => true,
       "requires_approval" => false,
-      "dangerous_tools" => ""
+      "dangerous_tools" => "",
+      "root_path" => ""
     }
 
     {:noreply,
@@ -757,7 +758,8 @@ defmodule OllamaChatWeb.ChatLive do
           "args" => Enum.join(Map.get(config, :args, []), "\n"),
           "enabled" => Map.get(config, :enabled, true),
           "requires_approval" => Map.get(config, :requires_approval, false),
-          "dangerous_tools" => Enum.join(Map.get(config, :dangerous_tools, []), ", ")
+          "dangerous_tools" => Enum.join(Map.get(config, :dangerous_tools, []), ", "),
+          "root_path" => Map.get(config, :root_path, "") || ""
         }
 
         {:noreply,
@@ -798,7 +800,12 @@ defmodule OllamaChatWeb.ChatLive do
       args: args,
       enabled: params["enabled"] == "true",
       requires_approval: params["requires_approval"] == "true",
-      dangerous_tools: dangerous_tools
+      dangerous_tools: dangerous_tools,
+      root_path:
+        case String.trim(params["root_path"] || "") do
+          "" -> nil
+          path -> path
+        end
     }
 
     # Determine if this is an add or update by checking the actual MCPClient state
@@ -2811,6 +2818,24 @@ defmodule OllamaChatWeb.ChatLive do
                                   />
                                   <p class="text-xs text-gray-500 mt-1">
                                     Comma-separated tool names that require user approval
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <label class="block text-xs font-medium text-gray-300 mb-1">
+                                    Workspace Root
+                                  </label>
+                                  <input
+                                    type="text"
+                                    name="root_path"
+                                    value={@editing_mcp_server["root_path"] || ""}
+                                    placeholder="/Users/you/projects/myapp"
+                                    class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
+                                    id="mcp-server-root-path"
+                                  />
+                                  <p class="text-xs text-gray-500 mt-1">
+                                    Optional. Restricts all file path arguments to this directory and its children.
+                                    Leave empty to allow any path the MCP server permits.
                                   </p>
                                 </div>
 

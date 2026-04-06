@@ -28,7 +28,8 @@ defmodule OllamaChat.MCPConfig do
     enabled: true,
     requires_approval: false,
     dangerous_tools: [],
-    env: %{}
+    env: %{},
+    root_path: nil
   }
 
   # ── Public API ──────────────────────────────────────────────────────
@@ -253,7 +254,8 @@ defmodule OllamaChat.MCPConfig do
       :enabled,
       :requires_approval,
       :dangerous_tools,
-      :env
+      :env,
+      :root_path
     ])
     |> Enum.map(fn
       {:name, name} when is_atom(name) -> {"name", Atom.to_string(name)}
@@ -310,7 +312,7 @@ defmodule OllamaChat.MCPConfig do
   end
 
   # Convert well-known config keys to atoms without leaking arbitrary atoms.
-  @known_keys ~w(name display_name description command args enabled requires_approval dangerous_tools env)a
+  @known_keys ~w(name display_name description command args enabled requires_approval dangerous_tools env root_path)a
 
   defp safe_to_atom(key) when is_binary(key) do
     atom = String.to_existing_atom(key)
@@ -360,7 +362,9 @@ defmodule OllamaChat.MCPConfig do
       {:enabled, &is_boolean/1, "enabled must be a boolean"},
       {:requires_approval, &is_boolean/1, "requires_approval must be a boolean"},
       {:dangerous_tools, &is_list/1, "dangerous_tools must be a list"},
-      {:env, &is_map/1, "env must be a map"}
+      {:env, &is_map/1, "env must be a map"},
+      {:root_path, fn v -> is_nil(v) or (is_binary(v) and String.trim(v) != "") end,
+       "root_path must be a non-empty string or nil"}
     ]
 
     Enum.flat_map(validations, fn {field, check_fn, message} ->
