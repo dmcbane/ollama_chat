@@ -1074,6 +1074,11 @@ defmodule OllamaChatWeb.ChatLive do
   end
 
   @impl true
+  def handle_event("edit_memory_type_preview", %{"memory_type_preview" => type}, socket) do
+    {:noreply, assign(socket, :memory_edit_type, type)}
+  end
+
+  @impl true
   def handle_event("toggle_memory_import", _params, socket) do
     {:noreply,
      socket
@@ -2299,9 +2304,16 @@ defmodule OllamaChatWeb.ChatLive do
 
             <%!-- Settings Dialog --%>
             <%= if @show_settings do %>
+              <%!-- Backdrop: click anywhere on the dark overlay to close --%>
               <div
-                class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-dialog-overlay"
+                class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 animate-dialog-overlay cursor-pointer"
                 phx-click="close_settings"
+                aria-hidden="true"
+              />
+              <%!-- Dialog container: pointer-events-none so clicks on the
+                   dark area fall through to the backdrop above, not this div --%>
+              <div
+                class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
                 phx-window-keydown="close_settings"
                 phx-key="Escape"
                 id="settings-overlay"
@@ -2310,9 +2322,11 @@ defmodule OllamaChatWeb.ChatLive do
                 aria-labelledby="settings-dialog-title"
                 phx-hook=".FocusTrap"
               >
+                <%!-- Dialog itself re-enables pointer events so all its
+                     interactive elements (sliders, inputs, buttons) work
+                     normally without bubbling up to close the dialog --%>
                 <div
-                  class="bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-dialog-content"
-                  phx-click-stop
+                  class="pointer-events-auto bg-slate-800 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col animate-dialog-content"
                   id="settings-dialog"
                   tabindex="-1"
                 >
@@ -3216,6 +3230,7 @@ defmodule OllamaChatWeb.ChatLive do
                                             </label>
                                             <select
                                               name="memory_type_preview"
+                                              phx-change="edit_memory_type_preview"
                                               class="w-full bg-slate-800 text-white border border-slate-600 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-blue-500"
                                               id={"type-select-preview-#{entry.id}"}
                                             >
