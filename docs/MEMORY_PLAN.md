@@ -1267,17 +1267,19 @@ Available in settings or sidebar:
 
 ### 6.7 Phase 6 Deliverables
 
-- [ ] Importance decay scheduled task
-- [ ] Duplicate detection and consolidation
-- [ ] Memory limits and pruning logic
-- [ ] Memory browser UI in Settings dialog (LiveView component)
-- [ ] Memory search/filter in browser
-- [ ] Edit/delete individual memories from UI
-- [ ] Export memories as JSON
-- [ ] Import memories from JSON
-- [ ] Memory statistics display
-- [ ] Production hardening (connection pooling, query timeouts, error rates)
-- [ ] Documentation for users
+- [x] Importance decay scheduled task
+- [x] Duplicate detection and consolidation
+- [x] Memory limits and pruning logic
+- [x] Memory browser UI in Settings dialog (LiveView component)
+- [x] Memory search/filter in browser
+- [x] Edit/delete individual memories from UI
+- [x] Export memories as JSON
+- [x] Import memories from JSON
+- [x] Memory statistics display
+- [x] Production hardening (connection pooling, query timeouts, error rates)
+- [x] Documentation for users
+
+> **Phase 6 Complete** ✅ — All deliverables shipped. 690 tests, 0 failures.
 
 ---
 

@@ -16,7 +16,13 @@ A beautiful, real-time web-based chat interface for interacting with local Ollam
   - 📁 File system operations (read, write, search files)
   - 🔌 Extensible tool system with approval workflows
   - 🛡️ Secure sandboxed workspace for file access
-  - See [MCP_USER_GUIDE.md](MCP_USER_GUIDE.md) for usage instructions
+  - See [MCP_USER_GUIDE.md](MCP_USER_GUIDE.md) for MCP usage · [docs/MEMORY_USER_GUIDE.md](docs/MEMORY_USER_GUIDE.md) for memory guide
+- 🧠 **LLM Memory** — Persistent memory across conversations
+  - Automatically extracts and stores facts, preferences, and context
+  - Semantic search using pgvector (cosine similarity)
+  - Memory Browser UI: view, search, edit, delete, export/import
+  - Runs daily maintenance (importance decay, pruning)
+  - Requires PostgreSQL + pgvector (see setup)
 
 ## Prerequisites
 
@@ -24,6 +30,8 @@ A beautiful, real-time web-based chat interface for interacting with local Ollam
 - Erlang/OTP 25 or later
 - Node.js 18+ (for asset compilation)
 - [Ollama](https://ollama.ai/) installed on your system
+- Docker (for PostgreSQL + pgvector, if using memory system)
+- OR PostgreSQL 14+ with pgvector extension installed manually
 
 ## Installation
 
@@ -152,6 +160,56 @@ set OLLAMA_KILL_COMMAND=taskkill /F /IM ollama.exe
 export OLLAMA_KILL_COMMAND="docker stop ollama && docker rm ollama"
 mix phx.server
 ```
+
+## Memory System Setup
+
+The LLM memory system requires PostgreSQL with the pgvector extension.
+
+### Quick Start (Docker)
+
+```bash
+# Start PostgreSQL + pgvector container
+./scripts/postgres-docker.sh start
+
+# Create and migrate the database
+mix ecto.create
+mix ecto.migrate
+
+# Pull the embedding model
+ollama pull nomic-embed-text
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_MEMORY_ENABLED` | `true` | Enable/disable the memory system |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model for semantic search |
+| `OLLAMA_MEMORY_MAX_RESULTS` | `10` | Max memories retrieved per message |
+| `OLLAMA_CHAT_DB_USERNAME` | `ollama_chat` | PostgreSQL username |
+| `OLLAMA_CHAT_DB_PASSWORD` | `ollama_chat` | PostgreSQL password |
+| `OLLAMA_CHAT_DB_HOSTNAME` | `localhost` | PostgreSQL hostname |
+| `OLLAMA_CHAT_DB_NAME` | `ollama_chat_dev` | Database name |
+
+### Disabling Memory
+
+If you don't want to use the memory system, set:
+
+```bash
+OLLAMA_MEMORY_ENABLED=false mix phx.server
+```
+
+When disabled, no database connection is required and the application runs without PostgreSQL.
+
+### Memory Browser
+
+Open **Settings (⚙) → Memories** to:
+- Browse all stored memories with search and type filters
+- Edit importance or type of individual memories
+- Delete individual memories or all memories at once
+- Export memories as JSON / Import from JSON
+
+See [docs/MEMORY_USER_GUIDE.md](docs/MEMORY_USER_GUIDE.md) for the full guide.
 
 ## Usage
 
