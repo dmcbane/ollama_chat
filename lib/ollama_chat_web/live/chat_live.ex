@@ -89,6 +89,9 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:editing_memory_id, nil)
       |> assign(:memory_edit_importance, "0.5")
       |> assign(:memory_edit_type, "fact")
+      |> assign(:memory_show_import, false)
+      |> assign(:memory_import_json, "")
+      |> assign(:memory_import_error, nil)
       |> assign(:health_check_enabled, OllamaClient.health_check_enabled?())
       |> assign(:health_check_healthy, true)
       |> assign(:health_check_timer, nil)
@@ -1055,6 +1058,109 @@ defmodule OllamaChatWeb.ChatLive do
       {:error, reason} ->
         Logger.warning("Failed to export memories: #{inspect(reason)}")
         {:noreply, show_toast(socket, "Failed to export memories", :error)}
+    end
+  end
+
+  @impl true
+  def handle_event("edit_memory_importance_preview", %{"importance" => value}, socket) do
+    {:noreply, assign(socket, :memory_edit_importance, value)}
+  end
+
+  @impl true
+  def handle_event("toggle_memory_import", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:memory_show_import, !socket.assigns.memory_show_import)
+     |> assign(:memory_import_json, "")
+     |> assign(:memory_import_error, nil)}
+  end
+
+  @impl true
+  def handle_event("memory_import_json_change", %{"json" => json}, socket) do
+    {:noreply, assign(socket, :memory_import_json, json)}
+  end
+
+  @impl true
+  def handle_event("import_memories", _params, socket) do
+    json = socket.assigns.memory_import_json
+
+    case Memory.import_memories(json) do
+      {:ok, %{imported: n, failed: 0}} ->
+        socket =
+          socket
+          |> assign(:memory_show_import, false)
+          |> assign(:memory_import_json, "")
+          |> assign(:memory_import_error, nil)
+          |> load_memories_data()
+          |> show_toast("Imported #{n} #{if n == 1, do: "memory", else: "memories"}", :success)
+
+        {:noreply, socket}
+
+      {:ok, %{imported: imported, failed: failed}} ->
+        socket =
+          socket
+          |> assign(:memory_import_error, "#{failed} entries failed validation")
+          |> load_memories_data()
+          |> show_toast("Imported #{imported}, #{failed} failed", :success)
+
+        {:noreply, socket}
+
+      {:error, {:json_decode_error, _}} ->
+        {:noreply,
+         assign(socket, :memory_import_error, "Invalid JSON — paste a valid JSON array")}
+
+      {:error, {:invalid_format, msg}} ->
+        {:noreply, assign(socket, :memory_import_error, msg)}
+
+      {:error, reason} ->
+        Logger.warning("Memory import failed: #{inspect(reason)}")
+        {:noreply, assign(socket, :memory_import_error, "Import failed: #{inspect(reason)}")}
+    end
+  end
+
+  @impl true
+  def handle_event("run_memory_decay", _params, socket) do
+    case Memory.decay_importance() do
+      {:ok, 0} ->
+        {:noreply, show_toast(socket, "No stale memories to decay", :success)}
+
+      {:ok, count} ->
+        socket =
+          socket
+          |> load_memories_data()
+          |> show_toast(
+            "Decayed #{count} #{if count == 1, do: "memory", else: "memories"}",
+            :success
+          )
+
+        {:noreply, socket}
+
+      {:error, reason} ->
+        Logger.warning("Memory decay failed: #{inspect(reason)}")
+        {:noreply, show_toast(socket, "Decay failed: #{inspect(reason)}", :error)}
+    end
+  end
+
+  @impl true
+  def handle_event("prune_memories_now", _params, socket) do
+    case Memory.prune_to_limit() do
+      {:ok, 0} ->
+        {:noreply, show_toast(socket, "Memory count is within limit — nothing pruned", :success)}
+
+      {:ok, count} ->
+        socket =
+          socket
+          |> load_memories_data()
+          |> show_toast(
+            "Pruned #{count} low-importance #{if count == 1, do: "memory", else: "memories"}",
+            :success
+          )
+
+        {:noreply, socket}
+
+      {:error, reason} ->
+        Logger.warning("Memory prune failed: #{inspect(reason)}")
+        {:noreply, show_toast(socket, "Prune failed: #{inspect(reason)}", :error)}
     end
   end
 
@@ -3190,6 +3296,88 @@ defmodule OllamaChatWeb.ChatLive do
                                 <% end %>
                               </div>
                             <% end %>
+                          </div>
+                          <%!-- Import Section --%>
+                          <div>
+                            <button
+                              type="button"
+                              phx-click="toggle_memory_import"
+                              class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors mb-2"
+                              id="toggle-import-btn"
+                            >
+                              <.icon
+                                name={
+                                  if @memory_show_import,
+                                    do: "hero-chevron-down",
+                                    else: "hero-chevron-right"
+                                }
+                                class="w-3.5 h-3.5"
+                              /> Import memories from JSON
+                            </button>
+                            <%= if @memory_show_import do %>
+                              <div class="bg-slate-900 rounded-lg border border-slate-700 p-3 space-y-2">
+                                <p class="text-xs text-gray-400">
+                                  Paste a JSON array of memory objects. Each object should have <code class="text-blue-300">content</code>, <code class="text-blue-300">memory_type</code>, and optionally
+                                  <code class="text-blue-300">importance</code>
+                                  fields.
+                                </p>
+                                <textarea
+                                  name="json"
+                                  rows="5"
+                                  placeholder='[{"content": "User prefers Elixir", "memory_type": "preference", "importance": 0.8}]'
+                                  phx-change="memory_import_json_change"
+                                  class="w-full bg-slate-800 text-white text-xs font-mono border border-slate-600 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none placeholder-slate-500"
+                                  id="memory-import-textarea"
+                                >{@memory_import_json}</textarea>
+                                <%= if @memory_import_error do %>
+                                  <p class="text-xs text-red-400">{@memory_import_error}</p>
+                                <% end %>
+                                <div class="flex justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    phx-click="toggle_memory_import"
+                                    class="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-slate-600 hover:border-slate-500 rounded-lg transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    phx-click="import_memories"
+                                    disabled={@memory_import_json == ""}
+                                    class="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                                    id="import-memories-btn"
+                                  >
+                                    Import
+                                  </button>
+                                </div>
+                              </div>
+                            <% end %>
+                          </div>
+
+                          <%!-- Maintenance Actions --%>
+                          <div class="pt-2 border-t border-slate-700/60">
+                            <p class="text-xs font-medium text-gray-400 mb-2">Maintenance</p>
+                            <div class="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                phx-click="run_memory_decay"
+                                class="px-3 py-1.5 text-xs text-gray-300 hover:text-white bg-slate-700/60 hover:bg-slate-700 rounded-lg transition-colors flex items-center gap-1.5"
+                                title="Reduce importance of memories not accessed in 30+ days"
+                                id="run-decay-btn"
+                              >
+                                <.icon name="hero-arrow-trending-down" class="w-3.5 h-3.5" />
+                                Run Decay
+                              </button>
+                              <button
+                                type="button"
+                                phx-click="prune_memories_now"
+                                class="px-3 py-1.5 text-xs text-gray-300 hover:text-white bg-slate-700/60 hover:bg-slate-700 rounded-lg transition-colors flex items-center gap-1.5"
+                                title="Delete lowest-scored memories above the configured limit"
+                                id="prune-memories-btn"
+                              >
+                                <.icon name="hero-scissors" class="w-3.5 h-3.5" /> Prune to Limit
+                              </button>
+                            </div>
                           </div>
                         <% end %>
                       </div>
