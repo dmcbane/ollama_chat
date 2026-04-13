@@ -3177,13 +3177,12 @@ defmodule OllamaChatWeb.ChatLive do
 
                             <%!-- Available Tools --%>
                             <div>
-                              <% filtered_tools = filter_mcp_tools(@mcp_tools, @mcp_tool_search) %>
                               <div class="flex items-center justify-between mb-3">
                                 <label class="text-sm font-medium text-gray-200">
                                   Available Tools
                                   <span class="ml-2 px-2 py-0.5 text-xs bg-purple-600/50 text-purple-300 rounded-full">
                                     <%= if @mcp_tool_search != "" do %>
-                                      {length(filtered_tools)}/{map_size(@mcp_tools)}
+                                      {filter_mcp_tools(@mcp_tools, @mcp_tool_search) |> length()}/{map_size(@mcp_tools)}
                                     <% else %>
                                       {map_size(@mcp_tools)}
                                     <% end %>
@@ -3215,14 +3214,14 @@ defmodule OllamaChatWeb.ChatLive do
                                 </p>
                               <% else %>
                                 <div class="space-y-2 max-h-64 overflow-y-auto">
-                                  <%= if filtered_tools == [] do %>
+                                  <%= if filter_mcp_tools(@mcp_tools, @mcp_tool_search) == [] do %>
                                     <p class="text-sm text-gray-500 py-4 text-center">
                                       No tools match
                                       <span class="text-gray-400">"{@mcp_tool_search}"</span>
                                     </p>
                                   <% else %>
                                     <div
-                                      :for={{name, info} <- filtered_tools}
+                                      :for={{name, info} <- filter_mcp_tools(@mcp_tools, @mcp_tool_search)}
                                       class="px-4 py-3 bg-slate-900 rounded-lg border border-slate-700"
                                     >
                                       <div class="flex items-start justify-between gap-2">
