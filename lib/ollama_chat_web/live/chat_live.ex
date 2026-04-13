@@ -82,6 +82,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:mcp_server_configs, [])
       |> assign(:editing_mcp_server, nil)
       |> assign(:mcp_form_error, nil)
+      |> assign(:mcp_tool_search, "")
       |> assign(:dir_browser_open, false)
       |> assign(:dir_browser_path, "")
       |> assign(:dir_browser_entries, [])
@@ -723,6 +724,11 @@ defmodule OllamaChatWeb.ChatLive do
     tab_atom = String.to_existing_atom(tab)
     socket = if tab_atom == :memories, do: load_memories_data(socket), else: socket
     {:noreply, assign(socket, :settings_tab, tab_atom)}
+  end
+
+  @impl true
+  def handle_event("mcp_tool_search", %{"query" => query}, socket) do
+    {:noreply, assign(socket, :mcp_tool_search, query)}
   end
 
   @impl true
@@ -3171,39 +3177,72 @@ defmodule OllamaChatWeb.ChatLive do
 
                             <%!-- Available Tools --%>
                             <div>
-                              <label class="text-sm font-medium text-gray-200 mb-3 block">
-                                Available Tools
-                                <span class="ml-2 px-2 py-0.5 text-xs bg-purple-600/50 text-purple-300 rounded-full">
-                                  {map_size(@mcp_tools)}
-                                </span>
-                              </label>
+                              <% filtered_tools = filter_mcp_tools(@mcp_tools, @mcp_tool_search) %>
+                              <div class="flex items-center justify-between mb-3">
+                                <label class="text-sm font-medium text-gray-200">
+                                  Available Tools
+                                  <span class="ml-2 px-2 py-0.5 text-xs bg-purple-600/50 text-purple-300 rounded-full">
+                                    <%= if @mcp_tool_search != "" do %>
+                                      {length(filtered_tools)}/{map_size(@mcp_tools)}
+                                    <% else %>
+                                      {map_size(@mcp_tools)}
+                                    <% end %>
+                                  </span>
+                                </label>
+                              </div>
+                              <%= if map_size(@mcp_tools) > 0 do %>
+                                <div class="relative mb-3">
+                                  <input
+                                    type="text"
+                                    name="query"
+                                    value={@mcp_tool_search}
+                                    placeholder="Search by name, description, or server…"
+                                    phx-change="mcp_tool_search"
+                                    phx-debounce="200"
+                                    class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
+                                    id="mcp-tool-search-input"
+                                  />
+                                  <.icon
+                                    name="hero-magnifying-glass"
+                                    class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+                                    aria-hidden="true"
+                                  />
+                                </div>
+                              <% end %>
                               <%= if map_size(@mcp_tools) == 0 do %>
                                 <p class="text-sm text-gray-500 py-4 text-center">
                                   No tools discovered yet. Servers may still be connecting.
                                 </p>
                               <% else %>
                                 <div class="space-y-2 max-h-64 overflow-y-auto">
-                                  <div
-                                    :for={{name, info} <- @mcp_tools}
-                                    class="px-4 py-3 bg-slate-900 rounded-lg border border-slate-700"
-                                  >
-                                    <div class="flex items-start justify-between gap-2">
-                                      <div class="flex-1 min-w-0">
-                                        <div class="font-medium text-blue-300 text-sm">{name}</div>
-                                        <div class="text-gray-400 text-xs mt-0.5 leading-relaxed">
-                                          {info.description}
+                                  <%= if filtered_tools == [] do %>
+                                    <p class="text-sm text-gray-500 py-4 text-center">
+                                      No tools match
+                                      <span class="text-gray-400">"{@mcp_tool_search}"</span>
+                                    </p>
+                                  <% else %>
+                                    <div
+                                      :for={{name, info} <- filtered_tools}
+                                      class="px-4 py-3 bg-slate-900 rounded-lg border border-slate-700"
+                                    >
+                                      <div class="flex items-start justify-between gap-2">
+                                        <div class="flex-1 min-w-0">
+                                          <div class="font-medium text-blue-300 text-sm">{name}</div>
+                                          <div class="text-gray-400 text-xs mt-0.5 leading-relaxed">
+                                            {info.description}
+                                          </div>
                                         </div>
+                                        <%= if info.requires_approval do %>
+                                          <span class="flex-shrink-0 px-1.5 py-0.5 text-xs bg-yellow-900/50 text-yellow-300 rounded whitespace-nowrap">
+                                            Approval
+                                          </span>
+                                        <% end %>
                                       </div>
-                                      <%= if info.requires_approval do %>
-                                        <span class="flex-shrink-0 px-1.5 py-0.5 text-xs bg-yellow-900/50 text-yellow-300 rounded whitespace-nowrap">
-                                          Approval
-                                        </span>
-                                      <% end %>
+                                      <div class="mt-1.5 text-gray-500 text-xs">
+                                        Server: <span class="text-gray-400">{info.server}</span>
+                                      </div>
                                     </div>
-                                    <div class="mt-1.5 text-gray-500 text-xs">
-                                      Server: <span class="text-gray-400">{info.server}</span>
-                                    </div>
-                                  </div>
+                                  <% end %>
                                 </div>
                               <% end %>
                             </div>
@@ -5011,6 +5050,18 @@ defmodule OllamaChatWeb.ChatLive do
   defp cancel_stream_timeout(ref) do
     _result = Process.cancel_timer(ref)
     :ok
+  end
+
+  defp filter_mcp_tools(tools, ""), do: Map.to_list(tools)
+
+  defp filter_mcp_tools(tools, query) do
+    q = String.downcase(query)
+
+    Enum.filter(tools, fn {name, info} ->
+      String.contains?(String.downcase(name), q) or
+        String.contains?(String.downcase(info.description || ""), q) or
+        String.contains?(String.downcase(to_string(info.server)), q)
+    end)
   end
 
   defp load_memories_data(socket) do

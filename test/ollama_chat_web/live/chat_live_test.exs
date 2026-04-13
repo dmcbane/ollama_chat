@@ -1722,4 +1722,55 @@ defmodule OllamaChatWeb.ChatLiveTest do
       OllamaChat.MCPClient.remove_server(String.to_atom(server_name))
     end
   end
+
+  describe "MCP tools search" do
+    setup do
+      original = Application.get_env(:ollama_chat, :mcp_enabled, false)
+      Application.put_env(:ollama_chat, :mcp_enabled, true)
+      on_exit(fn -> Application.put_env(:ollama_chat, :mcp_enabled, original) end)
+      :ok
+    end
+
+    test "search input is absent when no tools are discovered", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+
+      # No MCP servers running in tests → tools map is empty → input not rendered
+      refute has_element?(view, "#mcp-tool-search-input")
+    end
+
+    test "mcp_tool_search event is handled and clears without error", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+
+      # Fire event and verify the panel still renders (no crash, assign updated)
+      render_hook(view, "mcp_tool_search", %{"query" => "filesystem"})
+      _ = :sys.get_state(view.pid)
+      assert has_element?(view, "#settings-mcp-tab-panel")
+
+      # Clearing the query also works cleanly
+      render_hook(view, "mcp_tool_search", %{"query" => ""})
+      _ = :sys.get_state(view.pid)
+      assert has_element?(view, "#settings-mcp-tab-panel")
+    end
+
+    test "tool count badge shows plain count (not a ratio) when search is empty", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      render_hook(view, "open_settings", %{})
+      render_hook(view, "switch_settings_tab", %{"tab" => "mcp"})
+
+      # With empty search the badge renders a plain count, not "M/N"
+      # We verify by checking no "digit/digit" pattern appears inside the badge element
+      html = render(view)
+      document = LazyHTML.from_fragment(html)
+      badge = LazyHTML.filter(document, ".text-purple-300")
+      badge_text = badge |> LazyHTML.text() |> String.trim()
+      refute badge_text =~ ~r/\d+\/\d+/
+    end
+  end
 end

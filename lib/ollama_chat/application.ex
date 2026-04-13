@@ -8,32 +8,36 @@ defmodule OllamaChat.Application do
 
   @impl true
   def start(_type, _args) do
-    port = Application.get_env(:ollama_chat, OllamaChatWeb.Endpoint)[:http][:port] || 4000
+    endpoint_config = Application.get_env(:ollama_chat, OllamaChatWeb.Endpoint, [])
+    server_enabled? = Keyword.get(endpoint_config, :server, true) != false
+    port = get_in(endpoint_config, [:http, :port]) || 4000
 
-    case check_port_available(port) do
-      :ok ->
-        :ok
+    if server_enabled? do
+      case check_port_available(port) do
+        :ok ->
+          :ok
 
-      {:error, :eaddrinuse} ->
-        message = """
+        {:error, :eaddrinuse} ->
+          message = """
 
-        \e[31m[error] Could not start server: port #{port} is already in use.\e[0m
+          \e[31m[error] Could not start server: port #{port} is already in use.\e[0m
 
-        Another instance of Ollama Chat (or another application) is already
-        listening on port #{port}. To fix this, either:
+          Another instance of Ollama Chat (or another application) is already
+          listening on port #{port}. To fix this, either:
 
-          1. Stop the other process using port #{port}:
+            1. Stop the other process using port #{port}:
 
-             lsof -ti:#{port} | xargs kill
+               lsof -ti:#{port} | xargs kill
 
-          2. Set a different port:
+            2. Set a different port:
 
-             OLLAMA_CHAT_PORT=#{port + 1} mix phx.server
+               OLLAMA_CHAT_PORT=#{port + 1} mix phx.server
 
-        """
+          """
 
-        IO.puts(message)
-        System.halt(1)
+          IO.puts(message)
+          System.halt(1)
+      end
     end
 
     # Parse Ollama URL for Finch pool configuration
