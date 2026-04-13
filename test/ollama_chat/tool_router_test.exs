@@ -1,5 +1,5 @@
 defmodule OllamaChat.ToolRouterTest do
-  use OllamaChat.DataCase, async: true
+  use OllamaChat.DataCase, async: false
 
   alias OllamaChat.BuiltinTools.Registry, as: BuiltinRegistry
   alias OllamaChat.Memory

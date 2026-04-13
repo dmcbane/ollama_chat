@@ -1,5 +1,5 @@
 defmodule OllamaChat.EmbeddingsTest do
-  use OllamaChat.DataCase, async: true
+  use OllamaChat.DataCase, async: false
 
   alias OllamaChat.Embeddings
   alias OllamaChat.Memory

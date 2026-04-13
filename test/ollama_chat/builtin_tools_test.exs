@@ -1,5 +1,5 @@
 defmodule OllamaChat.BuiltinToolsTest do
-  use OllamaChat.DataCase, async: true
+  use OllamaChat.DataCase, async: false
 
   alias OllamaChat.BuiltinTools.Memory.Delete
   alias OllamaChat.BuiltinTools.Memory.List

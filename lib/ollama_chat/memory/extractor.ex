@@ -147,7 +147,9 @@ defmodule OllamaChat.Memory.Extractor do
           {:ok, %{memories_saved: non_neg_integer(), memories_skipped: non_neg_integer()}}
           | {:error, term()}
   def extract_from_conversation(conversation_id, messages, opts \\ []) do
-    if Memory.enabled?() do
+    enabled = Keyword.get(opts, :memory_enabled, Memory.enabled?())
+
+    if enabled do
       do_extract(conversation_id, messages, opts)
     else
       {:error, :memory_disabled}
@@ -175,17 +177,22 @@ defmodule OllamaChat.Memory.Extractor do
   def deduplicate(text, opts \\ []) when is_binary(text) do
     embedding_fn = Keyword.get(opts, :embedding_fn, &default_embedding_fn/1)
     threshold = Keyword.get(opts, :threshold, dedup_threshold())
+    enabled = Keyword.get(opts, :memory_enabled, Memory.enabled?())
 
-    case embedding_fn.(text) do
-      {:ok, embedding} when is_list(embedding) ->
-        find_duplicate(embedding, threshold)
+    if not enabled do
+      :new
+    else
+      case embedding_fn.(text) do
+        {:ok, embedding} when is_list(embedding) ->
+          find_duplicate(embedding, threshold)
 
-      {:error, reason} ->
-        Logger.debug(
-          "Deduplication embedding failed, treating candidate as new: #{inspect(reason)}"
-        )
+        {:error, reason} ->
+          Logger.debug(
+            "Deduplication embedding failed, treating candidate as new: #{inspect(reason)}"
+          )
 
-        :new
+          :new
+      end
     end
   end
 
@@ -210,7 +217,9 @@ defmodule OllamaChat.Memory.Extractor do
         ) ::
           {:ok, ConversationSummary.t()} | {:error, term()}
   def summarize(conversation_id, messages, opts \\ []) do
-    if Memory.enabled?() do
+    enabled = Keyword.get(opts, :memory_enabled, Memory.enabled?())
+
+    if enabled do
       do_summarize(conversation_id, messages, opts)
     else
       {:error, :memory_disabled}

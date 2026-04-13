@@ -164,12 +164,7 @@ defmodule OllamaChat.Memory.ExtractorTest do
     end
 
     test "returns :new when memory is disabled" do
-      Application.put_env(:ollama_chat, :memory_enabled, false)
-      on_exit(fn -> Application.put_env(:ollama_chat, :memory_enabled, true) end)
-
-      # search_by_similarity_with_scores returns {:error, :memory_disabled} →
-      # find_duplicate degrades to :new
-      result = Extractor.deduplicate("Some text", embedding_fn: mock_embed_ok())
+      result = Extractor.deduplicate("Some text", embedding_fn: mock_embed_ok(), memory_enabled: false)
       assert result == :new
     end
   end
@@ -323,14 +318,12 @@ defmodule OllamaChat.Memory.ExtractorTest do
     end
 
     test "returns {:error, :memory_disabled} when memory is disabled" do
-      Application.put_env(:ollama_chat, :memory_enabled, false)
-      on_exit(fn -> Application.put_env(:ollama_chat, :memory_enabled, true) end)
-
       assert {:error, :memory_disabled} =
                Extractor.extract_from_conversation(
                  "conv-disabled",
                  sample_messages(),
-                 chat_fn: mock_chat_fn("[]")
+                 chat_fn: mock_chat_fn("[]"),
+                 memory_enabled: false
                )
     end
 
@@ -483,14 +476,12 @@ defmodule OllamaChat.Memory.ExtractorTest do
     end
 
     test "returns {:error, :memory_disabled} when memory is disabled" do
-      Application.put_env(:ollama_chat, :memory_enabled, false)
-      on_exit(fn -> Application.put_env(:ollama_chat, :memory_enabled, true) end)
-
       assert {:error, :memory_disabled} =
                Extractor.summarize(
                  "conv-sum-disabled",
                  sample_messages(),
-                 chat_fn: mock_chat_fn("Summary text.")
+                 chat_fn: mock_chat_fn("Summary text."),
+                 memory_enabled: false
                )
     end
 
