@@ -1971,7 +1971,7 @@ defmodule OllamaChatWeb.ChatLive do
                 phx-click={JS.toggle(to: "#export-options")}
                 disabled={@current_conversation_id == nil}
                 class={[
-                  "w-full px-3 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center justify-center gap-1.5",
+                  "h-full w-full px-3 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center justify-center gap-1.5",
                   if(@current_conversation_id != nil,
                     do: "hover:bg-slate-700",
                     else: "text-slate-500 border-slate-700/50 cursor-not-allowed"
@@ -3716,7 +3716,7 @@ defmodule OllamaChatWeb.ChatLive do
                     <%!-- File upload button --%>
                     <label
                       for={@uploads.files.ref}
-                      class="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white cursor-pointer border border-slate-600"
+                      class="flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white cursor-pointer border border-slate-600"
                     >
                       <.icon name="hero-paper-clip" class="w-4 h-4" aria-hidden="true" />
                       <span>Attach</span>
