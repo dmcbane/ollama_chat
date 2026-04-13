@@ -90,31 +90,40 @@ defmodule OllamaChatWeb.CoreComponents do
       <.button navigate={~p"/"}>Home</.button>
   """
   attr :rest, :global, include: ~w(href navigate patch method download name value disabled)
-  attr :class, :any
-  attr :variant, :string, values: ~w(primary)
+  attr :class, :any, default: nil
+  attr :variant, :string, values: ~w(primary secondary danger success)
   slot :inner_block, required: true
 
   def button(%{rest: rest} = assigns) do
-    variants = %{"primary" => "btn-primary", nil => "btn-primary btn-soft"}
+    variants = %{
+      "primary" => "btn-primary",
+      "secondary" => "btn-neutral btn-outline",
+      "danger" => "btn-error",
+      "success" => "btn-success",
+      nil => "btn-primary btn-soft"
+    }
 
-    assigns =
-      assign_new(assigns, :class, fn ->
-        [
-          "btn",
-          Map.fetch!(variants, assigns[:variant]),
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-offset-1"
-        ]
-      end)
+    # Always merge variant classes with any caller-supplied class so
+    # callers can add layout utilities (e.g. class="flex-1 w-full") without
+    # losing the design-system base styles.
+    btn_class = [
+      "btn",
+      Map.fetch!(variants, assigns[:variant]),
+      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-offset-1",
+      assigns[:class]
+    ]
+
+    assigns = assign(assigns, :btn_class, btn_class)
 
     if rest[:href] || rest[:navigate] || rest[:patch] do
       ~H"""
-      <.link class={@class} {@rest}>
+      <.link class={@btn_class} {@rest}>
         {render_slot(@inner_block)}
       </.link>
       """
     else
       ~H"""
-      <button class={@class} {@rest} type="button">
+      <button class={@btn_class} {@rest} type="button">
         {render_slot(@inner_block)}
       </button>
       """

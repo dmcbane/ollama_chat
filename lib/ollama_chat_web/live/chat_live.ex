@@ -2182,11 +2182,11 @@ defmodule OllamaChatWeb.ChatLive do
                     <%= cond do %>
                       <% message.role == "user" -> %>
                         <div class="flex justify-end">
-                          <div class="text-white bg-slate-700/50 border border-slate-600 px-4 py-3 max-w-[80%] relative">
+                          <div class="text-white bg-slate-700/50 border border-slate-600 rounded-lg px-4 py-3 max-w-[80%] relative">
                             <p class="whitespace-pre-wrap break-words">{message.content}</p>
                             <button
                               type="button"
-                              class="copy-btn absolute top-2 left-2 p-1 rounded text-cyan-400 hover:text-cyan-300 bg-black/30 hover:bg-black/50 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500 transition-all z-10"
+                              class="copy-btn absolute top-2 right-2 p-1 rounded text-cyan-400 hover:text-cyan-300 bg-black/30 hover:bg-black/50 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500 transition-all z-10"
                               aria-label="Copy message"
                             >
                               <.icon
@@ -2200,7 +2200,7 @@ defmodule OllamaChatWeb.ChatLive do
                         </div>
                       <% message.role == "tool_error" -> %>
                         <div class="flex justify-start">
-                          <div class="border border-red-700 px-4 py-3 max-w-[80%]">
+                          <div class="border border-red-700 rounded-lg px-4 py-3 max-w-[80%]">
                             <div class="flex items-center gap-2">
                               <span class="text-red-400 text-xs">&#x2716;</span>
                               <span class="text-sm text-red-300">
@@ -2219,7 +2219,7 @@ defmodule OllamaChatWeb.ChatLive do
                         <div class="flex justify-start flex-col gap-2">
                           <%!-- Single collapsible intermediate activity container --%>
                           <%= if has_intermediate_events?(message, @streaming_message_id, @streaming_events) do %>
-                            <div class="border border-slate-600 max-w-[80%]">
+                            <div class="border border-slate-600 rounded-lg max-w-[80%]">
                               <div class="flex items-center gap-2 px-3 py-1">
                                 <span class="text-xs text-slate-400 flex-1">
                                   <%= if message.streaming do %>
@@ -2285,7 +2285,7 @@ defmodule OllamaChatWeb.ChatLive do
                           <% end %>
 
                           <%!-- Main streaming/final response --%>
-                          <div class="text-white border border-slate-600 px-4 py-3 max-w-[80%] relative">
+                          <div class="text-white bg-slate-800/60 border border-slate-600 rounded-lg px-4 py-3 max-w-[80%] relative">
                             <%= if message.streaming do %>
                               <p class="whitespace-pre-wrap break-words">{message.content}</p>
                               <span class="inline-block w-2 h-4 bg-white ml-1 animate-pulse"></span>
@@ -2353,20 +2353,12 @@ defmodule OllamaChatWeb.ChatLive do
                   </div>
 
                   <div class="flex gap-3">
-                    <button
-                      type="button"
-                      phx-click="approve_tool"
-                      class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
-                    >
+                    <.button variant="success" phx-click="approve_tool" class="flex-1">
                       Approve
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="cancel_tool_approval"
-                      class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors"
-                    >
+                    </.button>
+                    <.button variant="danger" phx-click="cancel_tool_approval" class="flex-1">
                       Deny
-                    </button>
+                    </.button>
                   </div>
                 </div>
               </div>
@@ -3722,9 +3714,9 @@ defmodule OllamaChatWeb.ChatLive do
                     <%!-- File upload button --%>
                     <label
                       for={@uploads.files.ref}
-                      class="flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-white cursor-pointer"
+                      class="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white cursor-pointer border border-slate-600"
                     >
-                      <.icon name="hero-paper-clip" class="w-5 h-5" />
+                      <.icon name="hero-paper-clip" class="w-4 h-4" aria-hidden="true" />
                       <span>Attach</span>
                       <.live_file_input upload={@uploads.files} class="hidden" />
                     </label>
@@ -3732,25 +3724,17 @@ defmodule OllamaChatWeb.ChatLive do
                       <button
                         type="button"
                         phx-click="cancel_stream"
-                        class={[
-                          "px-6 py-3 rounded-lg font-medium transition-all duration-200",
-                          "bg-red-600 hover:bg-red-700 text-white",
-                          "flex items-center justify-center gap-2"
-                        ]}
+                        class="flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all duration-200 bg-red-600 hover:bg-red-700 text-white shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-1"
                       >
-                        <.icon name="hero-x-circle" class="w-5 h-5" />
+                        <.icon name="hero-x-circle" class="w-5 h-5" aria-hidden="true" />
                         <span>Cancel</span>
                       </button>
                     <% else %>
                       <button
                         type="submit"
-                        class={[
-                          "px-6 py-3 rounded-lg font-medium transition-all duration-200",
-                          "bg-blue-600 hover:bg-blue-700 text-white",
-                          "flex items-center justify-center gap-2"
-                        ]}
+                        class="flex items-center justify-center gap-2 px-8 py-3 rounded-lg font-semibold transition-all duration-200 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white shadow-lg hover:shadow-blue-600/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1"
                       >
-                        <.icon name="hero-paper-airplane" class="w-5 h-5" />
+                        <.icon name="hero-paper-airplane" class="w-5 h-5" aria-hidden="true" />
                         <span>Send</span>
                       </button>
                     <% end %>
