@@ -1779,7 +1779,7 @@ defmodule OllamaChatWeb.ChatLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
+    <div class="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900" data-theme="dark">
       <div class="mx-auto max-w-7xl px-4 py-8 xl:flex xl:gap-6">
         <%!-- Sidebar (left column on wide screens) --%>
         <div class="xl:w-80 xl:flex-shrink-0 xl:sticky xl:top-8 xl:self-start xl:max-h-[calc(100vh-4rem)] xl:overflow-y-auto mb-6 xl:mb-0">

@@ -99,7 +99,11 @@ defmodule OllamaChatWeb.CoreComponents do
 
     assigns =
       assign_new(assigns, :class, fn ->
-        ["btn", Map.fetch!(variants, assigns[:variant])]
+        [
+          "btn",
+          Map.fetch!(variants, assigns[:variant]),
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-offset-1"
+        ]
       end)
 
     if rest[:href] || rest[:navigate] || rest[:patch] do
@@ -110,7 +114,7 @@ defmodule OllamaChatWeb.CoreComponents do
       """
     else
       ~H"""
-      <button class={@class} {@rest}>
+      <button class={@class} {@rest} type="button">
         {render_slot(@inner_block)}
       </button>
       """

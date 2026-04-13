@@ -430,3 +430,50 @@ details summary::-webkit-details-marker {
     text-decoration: line-through;
     opacity: 0.7;
 }
+
+/* Light theme overrides for prose-chat — default dark values assume a dark
+   container, so we flip to dark-on-light equivalents under [data-theme=light]. */
+[data-theme=light] .prose-chat pre {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme=light] .prose-chat code {
+    background: rgba(0, 0, 0, 0.07);
+    color: oklch(21% 0.006 285.885);
+}
+
+[data-theme=light] .prose-chat pre code {
+    color: inherit;
+}
+
+[data-theme=light] .prose-chat th {
+    background: rgba(0, 0, 0, 0.06);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: oklch(21% 0.006 285.885);
+}
+
+[data-theme=light] .prose-chat td {
+    border-color: rgba(0, 0, 0, 0.08);
+    color: oklch(21% 0.006 285.885);
+}
+
+[data-theme=light] .prose-chat tr:nth-child(even) {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme=light] .prose-chat blockquote {
+    border-left-color: rgba(37, 99, 235, 0.5);
+    color: rgba(0, 0, 0, 0.75);
+}
+
+[data-theme=light] .prose-chat a {
+    color: #1d4ed8;
+}
+
+[data-theme=light] .prose-chat a:hover {
+    color: #1e40af;
+}
+
+[data-theme=light] .prose-chat hr {
+    border-top-color: rgba(0, 0, 0, 0.12);
+}
