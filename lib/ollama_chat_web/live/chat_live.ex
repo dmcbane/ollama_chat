@@ -1963,7 +1963,7 @@ defmodule OllamaChatWeb.ChatLive do
           </div>
 
           <%!-- Action buttons --%>
-          <div class="flex flex-wrap items-center gap-2 mb-4">
+          <div class="grid grid-cols-3 gap-2 mb-4">
             <%!-- Export dropdown --%>
             <div class="relative" id="export-menu">
               <button
@@ -1971,10 +1971,10 @@ defmodule OllamaChatWeb.ChatLive do
                 phx-click={JS.toggle(to: "#export-options")}
                 disabled={@current_conversation_id == nil}
                 class={[
-                  "px-4 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2",
+                  "w-full px-3 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center justify-center gap-1.5",
                   if(@current_conversation_id != nil,
                     do: "hover:bg-slate-700",
-                    else: "opacity-50 cursor-not-allowed"
+                    else: "text-slate-500 border-slate-700/50 cursor-not-allowed"
                   )
                 ]}
                 title="Export conversation"
@@ -2019,10 +2019,10 @@ defmodule OllamaChatWeb.ChatLive do
               data-confirm="Delete ALL conversations? This cannot be undone."
               disabled={@conversations == []}
               class={[
-                "px-4 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2",
+                "w-full px-3 py-2 bg-slate-800 text-white rounded-lg transition-colors border border-slate-700 flex items-center justify-center gap-1.5",
                 if(@conversations != [],
                   do: "hover:bg-red-900/50 hover:border-red-700 hover:text-red-200",
-                  else: "opacity-50 cursor-not-allowed"
+                  else: "text-slate-500 border-slate-700/50 cursor-not-allowed"
                 )
               ]}
               title="Delete all conversations"
@@ -2032,12 +2032,12 @@ defmodule OllamaChatWeb.ChatLive do
               <span class="text-sm">Clear All</span>
             </button>
 
-            <%!-- Settings button (same style as Export / Clear All) --%>
+            <%!-- Settings button --%>
             <button
               type="button"
               phx-click="open_settings"
               id="open-settings-btn"
-              class="group px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700 flex items-center gap-2"
+              class="group w-full px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700 flex items-center justify-center gap-1.5"
               title={settings_button_tooltip(assigns)}
             >
               <.icon name="hero-cog-6-tooth" class="w-5 h-5 animate-gear-hover" />
@@ -2431,6 +2431,8 @@ defmodule OllamaChatWeb.ChatLive do
                     >
                       General
                     </button>
+                    <%!-- Divider: separates the basic General tab from the advanced tabs --%>
+                    <div class="w-px bg-slate-700/60 my-2 mx-1" aria-hidden="true"></div>
                     <button
                       type="button"
                       phx-click="switch_settings_tab"
