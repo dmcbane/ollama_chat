@@ -1801,7 +1801,7 @@ defmodule OllamaChatWeb.ChatLive do
               title={ollama_status_tooltip(assigns)}
               id="ollama-status-indicator"
             >
-              <div class={"w-2 h-2 rounded-full flex-shrink-0 " <> ollama_dot}></div>
+              <div class={"w-2 h-2 rounded-full flex-shrink-0 " <> ollama_dot} aria-hidden="true"></div>
               <span class={"text-xs " <> ollama_text_cls}>
                 {ollama_label}
               </span>
@@ -1819,6 +1819,7 @@ defmodule OllamaChatWeb.ChatLive do
                     "w-3.5 h-3.5 flex-shrink-0",
                     if(map_size(@mcp_tools) > 0, do: "text-purple-400", else: "text-gray-500")
                   ]}
+                  aria-hidden="true"
                 />
                 <span class={[
                   "text-xs",
@@ -1950,8 +1951,8 @@ defmodule OllamaChatWeb.ChatLive do
                     phx-click="delete_conversation"
                     phx-value-conversation_id={conv["id"]}
                     data-confirm="Delete this conversation? This cannot be undone."
-                    class="p-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
-                    title="Delete conversation"
+                    class="p-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:text-red-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 rounded transition-all flex-shrink-0"
+                    aria-label={"Delete conversation: #{conv["title"]}"}
                     id={"delete-conv-#{conv["id"]}"}
                   >
                     <.icon name="hero-trash" class="w-4 h-4" />
@@ -2185,14 +2186,15 @@ defmodule OllamaChatWeb.ChatLive do
                             <p class="whitespace-pre-wrap break-words">{message.content}</p>
                             <button
                               type="button"
-                              class="copy-btn absolute top-2 left-2 p-1 rounded text-cyan-400 hover:text-cyan-300 bg-black/30 hover:bg-black/50 opacity-0 group-hover:opacity-100 transition-all z-10"
-                              title="Copy message"
+                              class="copy-btn absolute top-2 left-2 p-1 rounded text-cyan-400 hover:text-cyan-300 bg-black/30 hover:bg-black/50 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500 transition-all z-10"
+                              aria-label="Copy message"
                             >
                               <.icon
                                 name="hero-clipboard-document"
                                 class="w-4 h-4 copy-icon"
+                                aria-hidden="true"
                               />
-                              <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                              <.icon name="hero-check" class="w-4 h-4 check-icon hidden" aria-hidden="true" />
                             </button>
                           </div>
                         </div>
@@ -2230,15 +2232,16 @@ defmodule OllamaChatWeb.ChatLive do
                                   type="button"
                                   phx-click="toggle_activity"
                                   class={[
-                                    "px-1.5 py-0.5 rounded text-xs font-bold leading-none",
-                                    "text-slate-300 hover:text-white transition-colors"
+                                    "p-1 rounded text-slate-300 hover:text-white transition-colors",
+                                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-400"
                                   ]}
-                                  title={if @activity_expanded, do: "Collapse", else: "Expand"}
+                                  aria-label={if @activity_expanded, do: "Collapse tool activity", else: "Expand tool activity"}
+                                  aria-expanded={to_string(@activity_expanded)}
                                 >
                                   <%= if @activity_expanded do %>
-                                    &#x25BC;
+                                    <.icon name="hero-chevron-up" class="w-3.5 h-3.5" aria-hidden="true" />
                                   <% else %>
-                                    &#x25B2;
+                                    <.icon name="hero-chevron-down" class="w-3.5 h-3.5" aria-hidden="true" />
                                   <% end %>
                                 </button>
                               </div>
@@ -2298,14 +2301,15 @@ defmodule OllamaChatWeb.ChatLive do
                               <% end %>
                               <button
                                 type="button"
-                                class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Copy message"
+                                class="copy-btn absolute top-2 right-2 p-1 rounded text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-400 transition-opacity"
+                                aria-label="Copy message"
                               >
                                 <.icon
                                   name="hero-clipboard-document"
                                   class="w-4 h-4 copy-icon"
+                                  aria-hidden="true"
                                 />
-                                <.icon name="hero-check" class="w-4 h-4 check-icon hidden" />
+                                <.icon name="hero-check" class="w-4 h-4 check-icon hidden" aria-hidden="true" />
                               </button>
                             <% end %>
                           </div>
