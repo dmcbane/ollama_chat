@@ -200,9 +200,13 @@ case "$COMMAND" in
     # This path is used when an MCP client (e.g. Claude Desktop) invokes this
     # script as a subprocess. stdout must carry only JSON-RPC messages; all
     # other output (compiler, startup logs) is redirected to stderr.
+    #
+    # Extra arguments (e.g. workspace path) are passed through to the Elixir
+    # application via mix run arguments, where they can be read via System.argv().
     SERVER="${COMMAND:-filesystem}"
+    shift  # Remove the server name from arguments
     mix compile >&2
-    exec env MCP_SERVER="$SERVER" mix run --no-halt
+    exec env MCP_SERVER="$SERVER" mix run --no-halt -- "$@"
     ;;
 
   -h|--help|help)

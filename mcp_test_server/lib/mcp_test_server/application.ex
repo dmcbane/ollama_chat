@@ -13,6 +13,9 @@ defmodule McpTestServer.Application do
 
   @impl true
   def start(_type, _args) do
+    # Configure workspace path from command-line arguments (if provided)
+    configure_workspace_from_argv()
+
     server_module = select_server_module()
     children = build_children(server_module)
     opts = [strategy: :one_for_one, name: McpTestServer.Supervisor]
@@ -39,5 +42,31 @@ defmodule McpTestServer.Application do
 
   defp build_children(server_module) do
     [{McpTestServer.StdioServer, server_module}]
+  end
+
+  # Configure workspace path from command-line arguments.
+  # When MCP clients pass a root_path, it arrives as an additional argument
+  # after the server name. We configure it in the Application environment so
+  # the filesystem server can read it via Application.get_env/3.
+  defp configure_workspace_from_argv do
+    case System.argv() do
+      # First argument after server name is the workspace path
+      [workspace_path | _] when is_binary(workspace_path) and workspace_path != "" ->
+        expanded = Path.expand(workspace_path)
+
+        if File.dir?(expanded) do
+          Application.put_env(:mcp_test_server, :workspace_path, expanded)
+          IO.puts(:stderr, "MCP Filesystem workspace: #{expanded}")
+        else
+          IO.puts(
+            :stderr,
+            "Warning: workspace path #{workspace_path} does not exist, using default"
+          )
+        end
+
+      _ ->
+        # No workspace argument provided, use default
+        :ok
+    end
   end
 end
