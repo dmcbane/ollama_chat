@@ -293,10 +293,9 @@ defmodule McpTestServer.Servers.Filesystem do
 
   defp handle_read_file(%{"path" => path}) do
     workspace = get_workspace()
-    full_path = Path.join(workspace, path)
 
-    case validate_path(full_path, workspace) do
-      :ok ->
+    case resolve_path(path, workspace) do
+      {:ok, full_path} ->
         case File.read(full_path) do
           {:ok, content} ->
             %{content: [%{type: "text", text: "File: #{path}\n\n#{content}"}]}
@@ -315,10 +314,9 @@ defmodule McpTestServer.Servers.Filesystem do
 
   defp handle_write_file(%{"path" => path, "content" => content}) do
     workspace = get_workspace()
-    full_path = Path.join(workspace, path)
 
-    case validate_path(full_path, workspace) do
-      :ok ->
+    case resolve_path(path, workspace) do
+      {:ok, full_path} ->
         full_path |> Path.dirname() |> File.mkdir_p!()
 
         case File.write(full_path, content) do
@@ -341,10 +339,9 @@ defmodule McpTestServer.Servers.Filesystem do
   defp handle_list_directory(args) do
     path = Map.get(args, "path", ".")
     workspace = get_workspace()
-    full_path = Path.join(workspace, path)
 
-    case validate_path(full_path, workspace) do
-      :ok ->
+    case resolve_path(path, workspace) do
+      {:ok, full_path} ->
         case File.ls(full_path) do
           {:ok, entries} ->
             entries_text =
@@ -381,10 +378,9 @@ defmodule McpTestServer.Servers.Filesystem do
 
   defp handle_file_info(%{"path" => path}) do
     workspace = get_workspace()
-    full_path = Path.join(workspace, path)
 
-    case validate_path(full_path, workspace) do
-      :ok ->
+    case resolve_path(path, workspace) do
+      {:ok, full_path} ->
         case File.stat(full_path) do
           {:ok, stat} ->
             info = """
@@ -412,10 +408,9 @@ defmodule McpTestServer.Servers.Filesystem do
 
   defp handle_create_directory(%{"path" => path}) do
     workspace = get_workspace()
-    full_path = Path.join(workspace, path)
 
-    case validate_path(full_path, workspace) do
-      :ok ->
+    case resolve_path(path, workspace) do
+      {:ok, full_path} ->
         case File.mkdir_p(full_path) do
           :ok ->
             %{content: [%{type: "text", text: "Created directory: #{path}"}]}
@@ -434,11 +429,9 @@ defmodule McpTestServer.Servers.Filesystem do
 
   defp handle_move_file(%{"source" => source, "destination" => destination}) do
     workspace = get_workspace()
-    source_path = Path.join(workspace, source)
-    dest_path = Path.join(workspace, destination)
 
-    with :ok <- validate_path(source_path, workspace),
-         :ok <- validate_path(dest_path, workspace) do
+    with {:ok, source_path} <- resolve_path(source, workspace),
+         {:ok, dest_path} <- resolve_path(destination, workspace) do
       dest_path |> Path.dirname() |> File.mkdir_p!()
 
       case File.rename(source_path, dest_path) do
@@ -456,11 +449,9 @@ defmodule McpTestServer.Servers.Filesystem do
 
   defp handle_copy_file(%{"source" => source, "destination" => destination}) do
     workspace = get_workspace()
-    source_path = Path.join(workspace, source)
-    dest_path = Path.join(workspace, destination)
 
-    with :ok <- validate_path(source_path, workspace),
-         :ok <- validate_path(dest_path, workspace) do
+    with {:ok, source_path} <- resolve_path(source, workspace),
+         {:ok, dest_path} <- resolve_path(destination, workspace) do
       dest_path |> Path.dirname() |> File.mkdir_p!()
 
       case File.cp(source_path, dest_path) do
@@ -478,10 +469,9 @@ defmodule McpTestServer.Servers.Filesystem do
 
   defp handle_delete_file(%{"path" => path}) do
     workspace = get_workspace()
-    full_path = Path.join(workspace, path)
 
-    case validate_path(full_path, workspace) do
-      :ok ->
+    case resolve_path(path, workspace) do
+      {:ok, full_path} ->
         case File.rm(full_path) do
           :ok ->
             %{content: [%{type: "text", text: "Deleted file: #{path}"}]}
@@ -500,10 +490,9 @@ defmodule McpTestServer.Servers.Filesystem do
 
   defp handle_delete_directory(%{"path" => path}) do
     workspace = get_workspace()
-    full_path = Path.join(workspace, path)
 
-    case validate_path(full_path, workspace) do
-      :ok ->
+    case resolve_path(path, workspace) do
+      {:ok, full_path} ->
         case File.rm_rf(full_path) do
           {:ok, _files} ->
             %{content: [%{type: "text", text: "Deleted directory: #{path}"}]}
@@ -769,6 +758,40 @@ defmodule McpTestServer.Servers.Filesystem do
     Application.get_env(:mcp_test_server, :workspace_path, "/tmp/mcp_workspace")
   end
 
+  # Resolve a path (absolute or relative) against the workspace root.
+  # Returns {:ok, full_path} if the path is within the workspace,
+  # or {:error, reason} if validation fails.
+  #
+  # Supports:
+  # - Absolute paths: "/Users/mcbaneh/devel/ollama_chat/file.txt"
+  # - Relative paths: "ollama_chat/file.txt"
+  # - Workspace root: "." or ""
+  #
+  defp resolve_path(path, workspace) do
+    full_path =
+      if Path.type(path) == :absolute do
+        # Absolute path: use it directly
+        path
+      else
+        # Relative path: join with workspace
+        Path.join(workspace, path)
+      end
+
+    # Expand to resolve any . or .. segments
+    real_path = Path.expand(full_path)
+    real_workspace = Path.expand(workspace)
+
+    # Ensure the trailing slash for proper prefix checking
+    real_workspace = Path.join(real_workspace, "")
+
+    if String.starts_with?(real_path, real_workspace) or real_path == String.trim_trailing(real_workspace, "/") do
+      {:ok, real_path}
+    else
+      {:error, "Access denied: path outside workspace (#{path} -> #{real_path} not under #{real_workspace})"}
+    end
+  end
+
+  # Legacy validate_path for backward compatibility
   defp validate_path(full_path, workspace) do
     real_path = Path.expand(full_path)
     real_workspace = Path.expand(workspace)
