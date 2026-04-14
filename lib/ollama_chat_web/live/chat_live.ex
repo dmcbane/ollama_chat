@@ -62,7 +62,7 @@ defmodule OllamaChatWeb.ChatLive do
       |> assign(:current_conversation_id, nil)
       |> assign(:storage_warning, false)
       |> assign(:storage_error, nil)
-      |> assign(:system_prompt, "")
+      |> assign(:system_prompt, default_system_prompt())
       |> assign(:system_prompt_open, false)
       |> assign(:generation_params, default_generation_params())
       |> assign(:generation_params_open, false)
@@ -2048,7 +2048,7 @@ defmodule OllamaChatWeb.ChatLive do
             >
               <.icon name="hero-cog-6-tooth" class="w-5 h-5 animate-gear-hover" />
               <span class="text-sm">Settings</span>
-              <%= if @system_prompt != "" or generation_params_customized?(@generation_params) do %>
+              <%= if system_prompt_customized?(@system_prompt) or generation_params_customized?(@generation_params) do %>
                 <span class="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
               <% end %>
             </button>
@@ -2529,9 +2529,9 @@ defmodule OllamaChatWeb.ChatLive do
                         <div>
                           <div class="flex items-center justify-between mb-2">
                             <label class="text-sm font-medium text-gray-200">System Prompt</label>
-                            <%= if @system_prompt != "" do %>
+                            <%= if system_prompt_customized?(@system_prompt) do %>
                               <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded-full">
-                                Active
+                                Custom
                               </span>
                             <% end %>
                           </div>
@@ -4484,7 +4484,7 @@ defmodule OllamaChatWeb.ChatLive do
     |> assign(:recovery_step, nil)
     |> assign(:message_history, [])
     |> assign(:current_conversation_id, nil)
-    |> assign(:system_prompt, "")
+    |> assign(:system_prompt, default_system_prompt())
     |> assign(:system_prompt_open, false)
     |> assign(:generation_params, default_generation_params())
     |> assign(:generation_params_open, false)
@@ -4517,6 +4517,62 @@ defmodule OllamaChatWeb.ChatLive do
       "top_k" => 40,
       "num_ctx" => 4096
     }
+  end
+
+  defp default_system_prompt do
+    """
+    # Memory Usage Guidelines
+
+    You have access to a persistent memory system via the following tools:
+    - `memory_search`: Search for relevant information about the user or past conversations
+    - `memory_save`: Save important information for future recall
+    - `memory_list`: List all stored memories (use sparingly)
+    - `memory_update`: Update an existing memory by ID
+    - `memory_delete`: Delete a memory by ID
+
+    ## When to Use Memory
+
+    **At conversation start:**
+    - Search for relevant context about the user, their preferences, or ongoing projects
+    - Example: If the user asks about "the API project", search for memories about API-related work
+
+    **During conversation:**
+    - Save NEW important information as you learn it:
+      - User preferences (languages, tools, coding style)
+      - Facts about the user (role, expertise level, project details)
+      - Ongoing context (current projects, goals, constraints)
+      - Significant episodes (problems solved, decisions made)
+
+    **Do NOT save:**
+    - Temporary or ephemeral information
+    - Information already captured in code/files
+    - General programming knowledge
+    - Information you're uncertain about
+
+    ## How to Save Memories
+
+    Use appropriate memory types:
+    - `fact`: Objective information ("User works as a senior engineer at Acme Corp")
+    - `preference`: Likes/dislikes ("User prefers Elixir over Python for backend work")
+    - `context`: Ongoing situations ("Working on oauth2 migration, deadline is June 1st")
+    - `episodic`: Past events ("Debugged a race condition in the payment processor on May 15th")
+
+    Set importance correctly:
+    - **0.8-1.0 (high)**: Critical preferences, key project constraints, important decisions
+    - **0.5-0.7 (medium)**: Useful facts, normal preferences, project context
+    - **0.2-0.4 (low)**: Minor details, incidental information
+
+    Add categories for grouping: "programming", "work", "personal", "tools", etc.
+
+    ## Best Practices
+
+    1. **Search before answering** — When a question might benefit from past context, search first
+    2. **Be concise** — Keep memory content specific and actionable
+    3. **Be silent** — Do NOT tell the user "I'm saving this to memory" unless they ask
+    4. **Update, don't duplicate** — If similar memory exists, use `memory_update` instead of creating a duplicate
+    5. **Prune when needed** — Delete outdated or incorrect memories to keep the system clean
+    """
+    |> String.trim()
   end
 
   defp build_ollama_options(params) do
@@ -4552,6 +4608,10 @@ defmodule OllamaChatWeb.ChatLive do
 
   defp generation_params_customized?(params) do
     params != default_generation_params()
+  end
+
+  defp system_prompt_customized?(prompt) do
+    prompt != default_system_prompt()
   end
 
   # Synthesises the combined Ollama connection + health-check state into a
@@ -4623,7 +4683,7 @@ defmodule OllamaChatWeb.ChatLive do
   defp settings_button_tooltip(assigns) do
     parts =
       [
-        if(assigns.system_prompt != "", do: "Custom system prompt active"),
+        if(system_prompt_customized?(assigns.system_prompt), do: "Custom system prompt active"),
         if(generation_params_customized?(assigns.generation_params),
           do: "Generation parameters customized"
         ),

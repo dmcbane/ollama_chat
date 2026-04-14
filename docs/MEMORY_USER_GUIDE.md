@@ -11,6 +11,7 @@ Ollama Chat includes a persistent memory system that allows the LLM to remember 
 3. [Memory Types](#memory-types)
 4. [Memory Sources](#memory-sources)
 5. [Using Memory in Chat](#using-memory-in-chat)
+   - [Customizing via System Prompt](#customizing-memory-behavior-via-system-prompt)
 6. [Memory Browser](#memory-browser)
 7. [Importing and Exporting](#importing-and-exporting)
 8. [Automatic Maintenance](#automatic-maintenance)
@@ -92,6 +93,8 @@ Each memory is classified into one of four types:
 
 ## Using Memory in Chat
 
+> **💡 See also:** [System Prompt Guide](SYSTEM_PROMPT_GUIDE.md) — Learn how to customize memory behavior via the system prompt.
+
 ### The LLM Saves Memories Automatically
 
 When the LLM encounters something important during a conversation (your name, a preference, project context), it will use the built-in `memory_save` tool to save it immediately. You'll see a toast notification: **"Memory saved"**.
@@ -127,6 +130,49 @@ The LLM will search its memory store and tell you what it has.
 > "Update my role — I'm now a senior engineer, not a junior one."
 
 > "Delete everything you know about my old project."
+
+### Customizing Memory Behavior via System Prompt
+
+The **System Prompt** allows you to control how the LLM uses memory tools. By default, Ollama Chat includes instructions that tell the LLM when and how to save memories, but you can customize this behavior.
+
+**To access the System Prompt:**
+
+1. Look for the **System Prompt** collapsible section in the chat interface (near the message input area)
+2. Click to expand it
+3. Add or modify instructions
+
+**Default memory instructions include:**
+
+- **Search first** — The LLM searches memories at conversation start and when context is needed
+- **Save silently** — Memories are saved during conversation without announcing it
+- **Choose appropriate types** — Use `fact`, `preference`, `context`, or `episodic` based on the content
+- **Set importance correctly** — High (0.8+) for critical info, medium (0.5) for normal, low (0.2) for minor details
+
+**Example customizations:**
+
+*More aggressive saving:*
+```
+Save memories more frequently, even for small details about my workflow and tools.
+```
+
+*More conservative saving:*
+```
+Only save memories when I explicitly ask you to, or when you learn critical information about me.
+```
+
+*Domain-specific focus:*
+```
+Focus memory on technical decisions, architecture choices, and project constraints.
+Ignore personal preferences unless they directly affect code quality.
+```
+
+*Importance tuning:*
+```
+Use high importance (0.8+) for security decisions, architecture patterns, and hard-learned lessons.
+Use low importance (0.2-0.4) for anything I can easily look up later.
+```
+
+The system prompt is saved per-conversation and persists when you reload the page.
 
 ---
 

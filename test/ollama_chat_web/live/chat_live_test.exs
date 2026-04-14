@@ -472,25 +472,28 @@ defmodule OllamaChatWeb.ChatLiveTest do
       assert has_element?(view, "#settings-system-prompt-form")
     end
 
-    test "shows Active badge when system prompt is set", %{conn: conn} do
+    test "shows Custom badge when system prompt is customized", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
       render_hook(view, "update_system_prompt", %{"system_prompt" => "Be helpful"})
 
-      # Settings button shows indicator dot when system prompt is active
+      # Settings button shows indicator dot when system prompt is customized
       html = render(view)
       assert html =~ "bg-blue-500"
 
-      # Active badge visible inside settings dialog
+      # Custom badge visible inside settings dialog
       view |> element("#open-settings-btn") |> render_click()
       html = render(view)
-      assert html =~ "Active"
+      assert html =~ "Custom"
     end
 
-    test "no Active badge when system prompt is empty", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/")
+    test "no Custom badge when system prompt is default", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
 
-      refute html =~ "Active"
+      # With default system prompt, no Custom badge should appear
+      view |> element("#open-settings-btn") |> render_click()
+      html = render(view)
+      refute html =~ "Custom"
     end
 
     test "system prompt is restored from loaded conversation", %{conn: conn} do
@@ -512,7 +515,7 @@ defmodule OllamaChatWeb.ChatLiveTest do
 
       html = render(view)
       assert html =~ "You are a pirate"
-      assert html =~ "Active"
+      assert html =~ "Custom"
     end
 
     test "system prompt is reset on new conversation", %{conn: conn} do
