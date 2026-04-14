@@ -3190,13 +3190,12 @@ defmodule OllamaChatWeb.ChatLive do
                                 </label>
                               </div>
                               <%= if map_size(@mcp_tools) > 0 do %>
-                                <div class="relative mb-3">
+                                <form phx-change="mcp_tool_search" class="relative mb-3">
                                   <input
                                     type="text"
                                     name="query"
                                     value={@mcp_tool_search}
                                     placeholder="Search by name, description, or server…"
-                                    phx-change="mcp_tool_search"
                                     phx-debounce="200"
                                     class="w-full bg-slate-900 text-white border border-slate-600 rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-slate-500"
                                     id="mcp-tool-search-input"
@@ -3206,7 +3205,7 @@ defmodule OllamaChatWeb.ChatLive do
                                     class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
                                     aria-hidden="true"
                                   />
-                                </div>
+                                </form>
                               <% end %>
                               <%= if map_size(@mcp_tools) == 0 do %>
                                 <p class="text-sm text-gray-500 py-4 text-center">
