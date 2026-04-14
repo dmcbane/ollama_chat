@@ -285,7 +285,7 @@ defmodule McpTestServer.Servers.Filesystem do
       "delete_directories_by_pattern" -> handle_delete_directories_by_pattern(arguments)
       "copy_files" -> handle_copy_files(arguments)
       "move_files" -> handle_move_files(arguments)
-      _ -> %{isError: true, content: [%{type: "text", text: "Unknown tool: #{tool_name}"}]}
+      _ -> %{"isError" => true, "content" => [%{"type" => "text", "text" => "Unknown tool: #{tool_name}"}]}
     end
   end
 
@@ -298,17 +298,17 @@ defmodule McpTestServer.Servers.Filesystem do
       {:ok, full_path} ->
         case File.read(full_path) do
           {:ok, content} ->
-            %{content: [%{type: "text", text: "File: #{path}\n\n#{content}"}]}
+            %{"content" => [%{"type" => "text", "text" => "File: #{path}\n\n#{content}"}]}
 
           {:error, :enoent} ->
-            %{isError: true, content: [%{type: "text", text: "File not found: #{path}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "File not found: #{path}"}]}
 
           {:error, reason} ->
-            %{isError: true, content: [%{type: "text", text: "Error reading file: #{inspect(reason)}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "Error reading file: #{inspect(reason)}"}]}
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -322,17 +322,17 @@ defmodule McpTestServer.Servers.Filesystem do
         case File.write(full_path, content) do
           :ok ->
             %{
-              content: [
-                %{type: "text", text: "Successfully wrote #{byte_size(content)} bytes to #{path}"}
+              "content" => [
+                %{"type" => "text", "text" => "Successfully wrote #{byte_size(content)} bytes to #{path}"}
               ]
             }
 
           {:error, reason} ->
-            %{isError: true, content: [%{type: "text", text: "Error writing file: #{inspect(reason)}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "Error writing file: #{inspect(reason)}"}]}
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -362,17 +362,17 @@ defmodule McpTestServer.Servers.Filesystem do
               |> Enum.sort()
               |> Enum.join("\n")
 
-            %{content: [%{type: "text", text: "Directory: #{path}\n\n#{entries_text}"}]}
+            %{"content" => [%{"type" => "text", "text" => "Directory: #{path}\n\n#{entries_text}"}]}
 
           {:error, reason} ->
             %{
-              isError: true,
-              content: [%{type: "text", text: "Error listing directory: #{inspect(reason)}"}]
+              "isError" => true,
+              "content" => [%{"type" => "text", "text" => "Error listing directory: #{inspect(reason)}"}]
             }
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -392,17 +392,17 @@ defmodule McpTestServer.Servers.Filesystem do
             Modified: #{format_datetime(stat.mtime)}
             """
 
-            %{content: [%{type: "text", text: info}]}
+            %{"content" => [%{"type" => "text", "text" => info}]}
 
           {:error, reason} ->
             %{
-              isError: true,
-              content: [%{type: "text", text: "Error getting file info: #{inspect(reason)}"}]
+              "isError" => true,
+              "content" => [%{"type" => "text", "text" => "Error getting file info: #{inspect(reason)}"}]
             }
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -413,17 +413,17 @@ defmodule McpTestServer.Servers.Filesystem do
       {:ok, full_path} ->
         case File.mkdir_p(full_path) do
           :ok ->
-            %{content: [%{type: "text", text: "Created directory: #{path}"}]}
+            %{"content" => [%{"type" => "text", "text" => "Created directory: #{path}"}]}
 
           {:error, reason} ->
             %{
-              isError: true,
-              content: [%{type: "text", text: "Error creating directory: #{inspect(reason)}"}]
+              "isError" => true,
+              "content" => [%{"type" => "text", "text" => "Error creating directory: #{inspect(reason)}"}]
             }
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -436,14 +436,14 @@ defmodule McpTestServer.Servers.Filesystem do
 
       case File.rename(source_path, dest_path) do
         :ok ->
-          %{content: [%{type: "text", text: "Moved: #{source} -> #{destination}"}]}
+          %{"content" => [%{"type" => "text", "text" => "Moved: #{source} -> #{destination}"}]}
 
         {:error, reason} ->
-          %{isError: true, content: [%{type: "text", text: "Error moving file: #{inspect(reason)}"}]}
+          %{"isError" => true, "content" => [%{"type" => "text", "text" => "Error moving file: #{inspect(reason)}"}]}
       end
     else
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -456,14 +456,14 @@ defmodule McpTestServer.Servers.Filesystem do
 
       case File.cp(source_path, dest_path) do
         :ok ->
-          %{content: [%{type: "text", text: "Copied: #{source} -> #{destination}"}]}
+          %{"content" => [%{"type" => "text", "text" => "Copied: #{source} -> #{destination}"}]}
 
         {:error, reason} ->
-          %{isError: true, content: [%{type: "text", text: "Error copying file: #{inspect(reason)}"}]}
+          %{"isError" => true, "content" => [%{"type" => "text", "text" => "Error copying file: #{inspect(reason)}"}]}
       end
     else
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -474,17 +474,17 @@ defmodule McpTestServer.Servers.Filesystem do
       {:ok, full_path} ->
         case File.rm(full_path) do
           :ok ->
-            %{content: [%{type: "text", text: "Deleted file: #{path}"}]}
+            %{"content" => [%{"type" => "text", "text" => "Deleted file: #{path}"}]}
 
           {:error, :enoent} ->
-            %{isError: true, content: [%{type: "text", text: "File not found: #{path}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "File not found: #{path}"}]}
 
           {:error, reason} ->
-            %{isError: true, content: [%{type: "text", text: "Error deleting file: #{inspect(reason)}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "Error deleting file: #{inspect(reason)}"}]}
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -495,17 +495,17 @@ defmodule McpTestServer.Servers.Filesystem do
       {:ok, full_path} ->
         case File.rm_rf(full_path) do
           {:ok, _files} ->
-            %{content: [%{type: "text", text: "Deleted directory: #{path}"}]}
+            %{"content" => [%{"type" => "text", "text" => "Deleted directory: #{path}"}]}
 
           {:error, reason, _file} ->
             %{
-              isError: true,
-              content: [%{type: "text", text: "Error deleting directory: #{inspect(reason)}"}]
+              "isError" => true,
+              "content" => [%{"type" => "text", "text" => "Error deleting directory: #{inspect(reason)}"}]
             }
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -565,7 +565,7 @@ defmodule McpTestServer.Servers.Filesystem do
         files = full_pattern |> Path.wildcard() |> Enum.filter(&File.regular?/1)
 
         if Enum.empty?(files) do
-          %{content: [%{type: "text", text: "No files found matching pattern: #{pattern}"}]}
+          %{"content" => [%{"type" => "text", "text" => "No files found matching pattern: #{pattern}"}]}
         else
           results =
             Enum.map(files, fn full_path ->
@@ -581,7 +581,7 @@ defmodule McpTestServer.Servers.Filesystem do
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -601,7 +601,7 @@ defmodule McpTestServer.Servers.Filesystem do
               end)
 
             if Enum.empty?(matching) do
-              %{content: [%{type: "text", text: "No directories found matching pattern: #{pattern}"}]}
+              %{"content" => [%{"type" => "text", "text" => "No directories found matching pattern: #{pattern}"}]}
             else
               results =
                 Enum.map(matching, fn dir ->
@@ -618,11 +618,11 @@ defmodule McpTestServer.Servers.Filesystem do
             end
 
           {:error, reason} ->
-            %{isError: true, content: [%{type: "text", text: "Error reading directory: #{inspect(reason)}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "Error reading directory: #{inspect(reason)}"}]}
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -716,14 +716,14 @@ defmodule McpTestServer.Servers.Filesystem do
                 "Found #{length(matches)} file(s):\n" <> Enum.join(matches, "\n")
               end
 
-            %{content: [%{type: "text", text: result_text}]}
+            %{"content" => [%{"type" => "text", "text" => result_text}]}
 
           {:error, reason} ->
-            %{isError: true, content: [%{type: "text", text: "Invalid pattern: #{inspect(reason)}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "Invalid pattern: #{inspect(reason)}"}]}
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -735,20 +735,20 @@ defmodule McpTestServer.Servers.Filesystem do
       :ok ->
         case File.stat(full_path) do
           {:ok, %{size: size, type: :regular}} ->
-            %{content: [%{type: "text", text: "File: #{path}\nSize: #{format_size(size)} (#{size} bytes)"}]}
+            %{"content" => [%{"type" => "text", "text" => "File: #{path}\nSize: #{format_size(size)} (#{size} bytes)"}]}
 
           {:ok, %{type: :directory}} ->
-            %{isError: true, content: [%{type: "text", text: "Path is a directory, not a file: #{path}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "Path is a directory, not a file: #{path}"}]}
 
           {:error, :enoent} ->
-            %{isError: true, content: [%{type: "text", text: "File not found: #{path}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "File not found: #{path}"}]}
 
           {:error, reason} ->
-            %{isError: true, content: [%{type: "text", text: "Error getting file size: #{inspect(reason)}"}]}
+            %{"isError" => true, "content" => [%{"type" => "text", "text" => "Error getting file size: #{inspect(reason)}"}]}
         end
 
       {:error, reason} ->
-        %{isError: true, content: [%{type: "text", text: reason}]}
+        %{"isError" => true, "content" => [%{"type" => "text", "text" => reason}]}
     end
   end
 
@@ -875,9 +875,9 @@ defmodule McpTestServer.Servers.Filesystem do
       end
 
     if fail_count > 0 and success_count == 0 do
-      %{isError: true, content: [%{type: "text", text: text}]}
+      %{"isError" => true, "content" => [%{"type" => "text", "text" => text}]}
     else
-      %{content: [%{type: "text", text: text}]}
+      %{"content" => [%{"type" => "text", "text" => text}]}
     end
   end
 

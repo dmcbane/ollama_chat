@@ -1285,17 +1285,21 @@ defmodule OllamaChatWeb.ChatLive do
 
     # Check for tool calls if MCP is enabled
     if socket.assigns.mcp_enabled? and MCPResponseParser.contains_tool_call?(new_content) do
+      Logger.info("Tool call text detected in stream, attempting to parse...")
+      Logger.debug("Stream content: #{String.slice(new_content, 0, 200)}")
+
       case MCPResponseParser.parse_response(new_content) do
         {:tool_call, tool_name, args} ->
           # Tool call detected - stop streaming and handle it
           cancel_stream_timeout(socket.assigns.stream_timeout_ref)
-          Logger.info("Tool call detected: #{tool_name} with args: #{inspect(args)}")
+          Logger.info("✓ Tool call successfully parsed: #{tool_name} with args: #{inspect(args)}")
 
           socket = handle_tool_call(socket, message_id, tool_name, args)
           {:noreply, socket}
 
         :no_tool_call ->
           # Contains "tool_call" text but not a valid tool call yet, continue streaming
+          Logger.debug("Tool call text found but not yet parseable, continuing to stream...")
           stream_normal_chunk(socket, message_id, new_content)
       end
     else
@@ -1316,6 +1320,59 @@ defmodule OllamaChatWeb.ChatLive do
       "Stream completed for message_id=#{message_id} (#{String.length(raw_content)} chars)"
     )
 
+    # Check for tool calls one final time at the end of stream
+    if socket.assigns.mcp_enabled? and MCPResponseParser.contains_tool_call?(raw_content) do
+      Logger.info("Checking for tool call in completed stream...")
+
+      case MCPResponseParser.parse_response(raw_content) do
+        {:tool_call, tool_name, args} ->
+          Logger.info("✓ Tool call detected at stream end: #{tool_name}")
+
+          # Strip the tool call JSON and save the message before executing
+          cleaned_content = MCPResponseParser.strip_tool_call(raw_content)
+
+          # Save the assistant's decision (tool call) as a message
+          intermediate = socket.assigns.streaming_events
+
+          tool_call_message = %{
+            id: message_id,
+            role: "assistant",
+            content: cleaned_content,
+            html_content: if(cleaned_content != "", do: Markdown.render_to_string(cleaned_content), else: nil),
+            timestamp: DateTime.utc_now(),
+            streaming: false,
+            intermediate_events: if(socket.assigns.save_intermediate_events, do: intermediate, else: []),
+            model: socket.assigns.streaming_model
+          }
+
+          # Update history with the tool call message
+          updated_history = [tool_call_message | socket.assigns.message_history]
+
+          # Clean up streaming state and add message
+          socket =
+            socket
+            |> stream_insert(:messages, tool_call_message)
+            |> assign(:streaming_message, "")
+            |> assign(:streaming_events, [])
+            |> assign(:streaming_message_id, nil)
+            |> assign(:message_history, updated_history)
+            |> assign(:stream_timeout_ref, nil)
+            |> assign(:streaming_pid, nil)
+
+          # Now execute the tool (this will add tool_call event to fresh streaming_events)
+          socket = handle_tool_call(socket, message_id, tool_name, args)
+          {:noreply, socket}
+
+        :no_tool_call ->
+          Logger.debug("Tool call text present but not parseable, finalizing as normal message")
+          finalize_stream_as_message(socket, message_id, raw_content)
+      end
+    else
+      finalize_stream_as_message(socket, message_id, raw_content)
+    end
+  end
+
+  defp finalize_stream_as_message(socket, message_id, raw_content) do
     # Capture intermediate events (excluding the final chunk) for the collapsible container
     intermediate =
       Enum.reject(socket.assigns.streaming_events, fn e ->
@@ -1358,9 +1415,7 @@ defmodule OllamaChatWeb.ChatLive do
       generation_params: socket.assigns.generation_params
     }
 
-    socket = push_event(socket, "save_conversation", conversation_data)
-
-    {:noreply, socket}
+    push_event(socket, "save_conversation", conversation_data)
   end
 
   @impl true
