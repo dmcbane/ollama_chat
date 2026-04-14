@@ -141,6 +141,65 @@ This caused:
 - Streaming state to remain dirty
 - Tool continuation to look like disconnected "new chat"
 
+### Issue 4: Model Generating Incomplete JSON
+
+**Location:** Model behavior issue (not code)
+
+After fixing the above issues, testing revealed that `gemma4:e4b` was generating incomplete tool call JSON:
+
+```json
+{"tool_call": {"name": "list_directory", "arguments": {"path": "~/devel/ollama_chat"
+```
+
+The model stopped at 84 characters, missing the closing `}}}`. Debug logs showed:
+
+```
+[info] Checking for tool call in completed stream...
+[debug] Raw content length: 84
+[debug] Raw content (first 300 chars): {"tool_call": {"name": "list_directory", "arguments": {"path": "~/devel/ollama_chat"
+[debug] Tool call text present but not parseable, finalizing as normal message
+```
+
+**Root cause:** Smaller models like `gemma4:e4b` that haven't been fine-tuned for function calling or structured output often generate incomplete JSON. The model's EOS (end-of-sequence) token triggers prematurely before completing the structure.
+
+**Testing:** The exact same JSON parses correctly in isolation:
+```elixir
+# Parser works fine with complete JSON
+MCPResponseParser.parse_response(~s({"tool_call": {"name": "list_directory", "arguments": {"path": "~/devel"}}}))
+# => {:tool_call, "list_directory", %{"path" => "~/devel"}}
+```
+
+### Issue 5: LiveView Crash on Invalid Return Value
+
+**Location:** `lib/ollama_chat_web/live/chat_live.ex` (after adding stream_done tool check)
+
+When the helper function `finalize_stream_as_message/3` was called, LiveView crashed with:
+
+```
+[error] GenServer #PID<0.932.0> terminating
+** (ArgumentError) invalid noreply from OllamaChatWeb.ChatLive.handle_info/2 callback.
+
+Expected one of:
+    {:noreply, %Socket{}}
+
+Got: #Phoenix.LiveView.Socket<...>
+```
+
+**Root cause:** The helper function returned a bare socket instead of wrapping it in `{:noreply, socket}` tuple. The callers in `handle_info({:stream_done, ...})` expected the helper to return the proper tuple format.
+
+**Before:**
+```elixir
+:no_tool_call ->
+  finalize_stream_as_message(socket, message_id, raw_content)  # Returns socket
+```
+
+**After:**
+```elixir
+:no_tool_call ->
+  socket = finalize_stream_as_message(socket, message_id, raw_content)
+  {:noreply, socket}  # Wrap in proper tuple
+```
+
 ---
 
 ## Solutions
@@ -242,6 +301,71 @@ defp finalize_stream_as_message(socket, message_id, raw_content) do
 end
 ```
 
+### Fix 5: Improve Tool Calling Instructions
+
+Updated `MCPPromptBuilder.tool_calling_instructions/0` to be more explicit about completing JSON structures:
+
+**Before:**
+```elixir
+"""
+When you need to use a tool, respond with ONLY a JSON object in this exact format:
+```json
+{"tool_call": {"name": "tool_name", "arguments": {"param1": "value1"}}}
+```
+
+IMPORTANT:
+- Use ONLY the tool names listed above
+- Provide all required parameters
+- Use the exact JSON format shown
+"""
+```
+
+**After:**
+```elixir
+"""
+When you need to use a tool, respond with ONLY a complete JSON object in this exact format:
+```json
+{"tool_call": {"name": "tool_name", "arguments": {"param1": "value1"}}}
+```
+
+CRITICAL REQUIREMENTS:
+- The JSON MUST be complete with all closing braces: }}}
+- Use ONLY the tool names listed above
+- Provide all required parameters
+- Use the exact JSON format shown above
+- Do not stop generating until all three closing braces are output
+- Wait for the tool result before continuing your response
+"""
+```
+
+### Fix 6: Fix LiveView Callback Return Values
+
+Updated `handle_info({:stream_done, ...})` to properly wrap helper return value:
+
+**Before:**
+```elixir
+:no_tool_call ->
+  finalize_stream_as_message(socket, message_id, raw_content)  # Returns bare socket - CRASH!
+```
+
+**After:**
+```elixir
+:no_tool_call ->
+  socket = finalize_stream_as_message(socket, message_id, raw_content)
+  {:noreply, socket}  # Properly wrapped
+```
+
+### Fix 7: Model Selection for Tool Calling
+
+**Finding:** `gemma4:e4b` consistently generated incomplete JSON (stopped at 84 chars).
+
+**Solution:** Switch to models with better structured output support:
+- ✅ **`qwen3.5:9b`** - Successfully generates complete tool call JSON
+- ✅ **`Qwen2.5:7b-instruct`** - Alternative Qwen model with good performance
+- ❌ **`gemma4:e4b`** - Too small, lacks function calling fine-tuning
+
+**Result:** Tool calls execute successfully with `qwen3.5:9b`.
+
 ---
 
 ## Testing
@@ -340,21 +464,46 @@ MCP Filesystem workspace: /Users/mcbaneh/devel
 - Test both success and error response paths
 - Include enough context in error messages for remote debugging
 
+**On model selection for tool calling:**
+- Smaller models (<7B parameters) often lack function calling fine-tuning
+- Models may generate incomplete JSON structures, stopping before closing braces
+- Test tool calling with different models to find ones with good structured output
+- Qwen models (qwen3.5:9b, Qwen2.5:7b) show strong function calling capabilities
+- Enhanced prompts help but can't fully compensate for model limitations
+- Debug incomplete JSON by logging exact character count and first/last chars
+
+**On LiveView callback return values:**
+- Helper functions called from `handle_info/2` should return bare socket
+- The calling `handle_info/2` function must wrap result in `{:noreply, socket}` tuple
+- Never return bare socket from `handle_info/2` callback - will crash GenServer
+- Extract common finalization logic to helper, but handle tuple wrapping in caller
+- Use compiler warnings to catch mismatched function clauses early
+
 ---
 
 ## User Impact
 
-**Before:**
+**Before all fixes:**
 - User: "List files in ~/devel/ollama_chat"
 - LLM: `{"tool_call": {"name": "list_directory", "arguments": {"path": "~/devel/ollama_chat"}}}`
 - Result: Raw JSON displayed, no tool execution, no file listing
 
-**After:**
+**After initial fixes (with gemma4:e4b):**
 - User: "List files in ~/devel/ollama_chat"
-- LLM: [Brief decision or empty message]
+- LLM: `{"tool_call": {"name": "list_directory", "arguments": {"path": "~/devel/ollama_chat"` _(incomplete)_
+- Result: Raw incomplete JSON displayed, page appears to refresh, no tool execution
+
+**After all fixes (with qwen3.5:9b):**
+- User: "List files in ~/devel/ollama_chat"
+- LLM: [Generates complete tool call JSON]
 - [Tool execution indicator in activity section]
-- LLM: "The ollama_chat directory contains 28 files including: .claude, .git, assets, config, lib, test..."
-- Result: ✅ Natural conversation flow with actual file listing
+- LLM: "The ollama_chat directory contains: _build, AGENTS.md, assets, CLAUDE.md, config, deps..."
+- Result: ✅ **Natural conversation flow with actual file listing and results**
+
+**Key learnings:**
+- Code fixes were necessary but not sufficient
+- Model selection is critical for tool calling functionality
+- Qwen models provide reliable structured output for tool calls
 
 ---
 
@@ -372,7 +521,15 @@ This fix builds on previous work:
 1. **Filesystem server atom keys → string keys** — Convert all response maps to use string keys for MCP protocol compliance
 2. **Add tool call detection to stream_done** — Catch tool calls that complete at end of stream
 3. **Proper state cleanup before tool execution** — Finalize message and clear streaming state before executing tool
+4. **Improve tool calling instructions** — Add explicit requirements about completing JSON with all closing braces
+5. **Fix LiveView callback return values** — Properly wrap helper function returns in `{:noreply, socket}` tuple to prevent crashes
 
 Files modified:
-- `mcp_test_server/lib/mcp_test_server/servers/filesystem.ex` (17 handler functions)
-- `lib/ollama_chat_web/live/chat_live.ex` (`handle_info` for stream_done, new `finalize_stream_as_message/3`)
+- `mcp_test_server/lib/mcp_test_server/servers/filesystem.ex` (17 handler functions - string keys)
+- `lib/ollama_chat_web/live/chat_live.ex` (`handle_info` for stream_done, `finalize_stream_as_message/3`, callback return fixes)
+- `lib/ollama_chat/mcp_prompt_builder.ex` (enhanced tool calling instructions)
+- `docs/journal/2026-04-14-mcp-tool-call-execution-fix.md` (this journal entry)
+
+Model compatibility notes:
+- ✅ **Recommended:** `qwen3.5:9b`, `Qwen2.5:7b-instruct` - reliable tool calling
+- ❌ **Not recommended:** `gemma4:e4b` - generates incomplete JSON structures

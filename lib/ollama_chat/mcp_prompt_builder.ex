@@ -145,16 +145,18 @@ defmodule OllamaChat.MCPPromptBuilder do
     """
     ## How to Use Tools:
 
-    When you need to use a tool, respond with ONLY a JSON object in this exact format:
+    When you need to use a tool, respond with ONLY a complete JSON object in this exact format:
     ```json
     {"tool_call": {"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}}
     ```
 
-    IMPORTANT:
+    CRITICAL REQUIREMENTS:
+    - The JSON MUST be complete with all closing braces: }}}
     - Use ONLY the tool names listed above
     - Provide all required parameters
-    - Use the exact JSON format shown
+    - Use the exact JSON format shown above
     - Do not include any other text with the tool call
+    - Do not stop generating until all three closing braces are output
     - Wait for the tool result before continuing your response
 
     After receiving tool results, continue your response naturally, incorporating the information you received.

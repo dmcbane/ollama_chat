@@ -1323,6 +1323,9 @@ defmodule OllamaChatWeb.ChatLive do
     # Check for tool calls one final time at the end of stream
     if socket.assigns.mcp_enabled? and MCPResponseParser.contains_tool_call?(raw_content) do
       Logger.info("Checking for tool call in completed stream...")
+      Logger.debug("Raw content length: #{String.length(raw_content)}")
+      Logger.debug("Raw content (first 300 chars): #{String.slice(raw_content, 0, 300)}")
+      Logger.debug("Raw content (last 100 chars): #{String.slice(raw_content, -100, 100)}")
 
       case MCPResponseParser.parse_response(raw_content) do
         {:tool_call, tool_name, args} ->
@@ -1365,10 +1368,12 @@ defmodule OllamaChatWeb.ChatLive do
 
         :no_tool_call ->
           Logger.debug("Tool call text present but not parseable, finalizing as normal message")
-          finalize_stream_as_message(socket, message_id, raw_content)
+          socket = finalize_stream_as_message(socket, message_id, raw_content)
+          {:noreply, socket}
       end
     else
-      finalize_stream_as_message(socket, message_id, raw_content)
+      socket = finalize_stream_as_message(socket, message_id, raw_content)
+      {:noreply, socket}
     end
   end
 
