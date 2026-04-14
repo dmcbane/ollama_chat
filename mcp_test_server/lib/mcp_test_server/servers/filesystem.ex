@@ -766,15 +766,20 @@ defmodule McpTestServer.Servers.Filesystem do
   # - Absolute paths: "/Users/mcbaneh/devel/ollama_chat/file.txt"
   # - Relative paths: "ollama_chat/file.txt"
   # - Workspace root: "." or ""
+  # - Tilde expansion: "~/devel/ollama_chat/file.txt"
+  # - Environment variables: "$HOME/devel/file.txt" or "${HOME}/devel/file.txt"
   #
   defp resolve_path(path, workspace) do
+    # First, expand ~ and environment variables
+    expanded_path = expand_path_variables(path)
+
     full_path =
-      if Path.type(path) == :absolute do
+      if Path.type(expanded_path) == :absolute do
         # Absolute path: use it directly
-        path
+        expanded_path
       else
         # Relative path: join with workspace
-        Path.join(workspace, path)
+        Path.join(workspace, expanded_path)
       end
 
     # Expand to resolve any . or .. segments
@@ -789,6 +794,36 @@ defmodule McpTestServer.Servers.Filesystem do
     else
       {:error, "Access denied: path outside workspace (#{path} -> #{real_path} not under #{real_workspace})"}
     end
+  end
+
+  # Expand tilde (~) and environment variables in a path.
+  # Supports: ~, ~/path, $VAR, ${VAR}
+  defp expand_path_variables(path) do
+    path
+    |> expand_tilde()
+    |> expand_env_vars()
+  end
+
+  # Expand tilde to home directory
+  defp expand_tilde("~" <> rest) do
+    case System.get_env("HOME") do
+      nil -> "~" <> rest  # No HOME env var, return unchanged
+      home -> Path.join(home, String.trim_leading(rest, "/"))
+    end
+  end
+  defp expand_tilde(path), do: path
+
+  # Expand environment variables: $VAR and ${VAR}
+  defp expand_env_vars(path) do
+    # Replace ${VAR} first (greedy)
+    path = Regex.replace(~r/\$\{([A-Z_][A-Z0-9_]*)\}/, path, fn _, var ->
+      System.get_env(var) || "${#{var}}"
+    end)
+
+    # Then replace $VAR (non-greedy, stop at / or end of string)
+    Regex.replace(~r/\$([A-Z_][A-Z0-9_]*)(?=\/|$)/, path, fn _, var ->
+      System.get_env(var) || "$#{var}"
+    end)
   end
 
   # Legacy validate_path for backward compatibility
