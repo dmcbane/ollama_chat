@@ -2222,7 +2222,7 @@ defmodule OllamaChatWeb.ChatLive do
             <div class="bg-slate-800/50 rounded-t-xl shadow-2xl backdrop-blur-sm border border-slate-700 border-b-0 overflow-hidden flex-1 flex flex-col min-h-0">
               <div
                 id="messages-container"
-                phx-hook=".CopyMessage .ScrollToBottom"
+                phx-hook=".MessageContainer"
                 class="flex-1 overflow-y-auto p-6 space-y-4 relative min-h-[400px]"
               >
                 <%= if @messages_empty? do %>
@@ -3901,9 +3901,14 @@ defmodule OllamaChatWeb.ChatLive do
     <% end %>
 
     <%!-- Auto-scroll to bottom hook --%>
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollToBottom">
+    <%!-- Combined Message Container hook: Copy + Scroll to Bottom --%>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".MessageContainer">
       export default {
         mounted() {
+          console.log("MessageContainer hook mounted");
+          // Copy functionality
+          this.setupCopy();
+          // Scroll functionality
           this.scrollToBottom();
           this.setupObserver();
         },
@@ -3915,53 +3920,22 @@ defmodule OllamaChatWeb.ChatLive do
             this.observer.disconnect();
           }
         },
-        setupObserver() {
-          // Find the #messages div that contains the actual message stream
-          const messagesDiv = this.el.querySelector('#messages');
-          if (!messagesDiv) return;
-
-          // Watch for new messages being added to the DOM
-          this.observer = new MutationObserver((mutations) => {
-            // Check if new child elements were added
-            const hasNewNodes = mutations.some(mutation => mutation.addedNodes.length > 0);
-            if (hasNewNodes) {
-              this.scrollToBottom();
-            }
-          });
-
-          // Observe the messages stream div for changes to its children
-          this.observer.observe(messagesDiv, {
-            childList: true,
-            subtree: false
-          });
-        },
-        scrollToBottom() {
-          // Only auto-scroll if user is near the bottom (within 100px)
-          const isNearBottom = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 100;
-
-          if (isNearBottom) {
-            // Use requestAnimationFrame for smooth scrolling
-            requestAnimationFrame(() => {
-              this.el.scrollTop = this.el.scrollHeight;
-            });
-          }
-        }
-      }
-    </script>
-
-    <%!-- Copy message to clipboard hook (event delegation) --%>
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".CopyMessage">
-      export default {
-        mounted() {
+        setupCopy() {
           this.el.addEventListener("click", (e) => {
             const btn = e.target.closest(".copy-btn");
             if (!btn) return;
 
             const messageEl = btn.closest("[data-content]");
-            if (!messageEl) return;
+            if (!messageEl) {
+              console.error("No message element with data-content found");
+              return;
+            }
 
             const content = messageEl.getAttribute("data-content");
+            console.log("Copying:", content?.substring(0, 50) + "...");
+
             navigator.clipboard.writeText(content).then(() => {
+              console.log("✓ Copied successfully");
               const copyIcon = btn.querySelector(".copy-icon");
               const checkIcon = btn.querySelector(".check-icon");
               if (copyIcon && checkIcon) {
@@ -3972,8 +3946,36 @@ defmodule OllamaChatWeb.ChatLive do
                   checkIcon.classList.add("hidden");
                 }, 2000);
               }
+            }).catch(err => {
+              console.error("Failed to copy:", err);
             });
           });
+        },
+        setupObserver() {
+          const messagesDiv = this.el.querySelector('#messages');
+          if (!messagesDiv) return;
+
+          this.observer = new MutationObserver((mutations) => {
+            const hasNewNodes = mutations.some(mutation => mutation.addedNodes.length > 0);
+            if (hasNewNodes) {
+              this.scrollToBottom();
+            }
+          });
+
+          this.observer.observe(messagesDiv, {
+            childList: true,
+            subtree: false
+          });
+        },
+        scrollToBottom() {
+          // Only auto-scroll if user is near the bottom (within 100px)
+          const isNearBottom = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 100;
+
+          if (isNearBottom) {
+            requestAnimationFrame(() => {
+              this.el.scrollTop = this.el.scrollHeight;
+            });
+          }
         }
       }
     </script>
